@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,10 +55,19 @@ func main() {
 	case "create":
 		createContainer()
 	case "ls":
-		listPartitions(getPartitions())
 		listContainers()
+	case "lspart":
+		listPartitions(getPartitions())
 	case "delete":
 		deleteContainer()
+	case "shell":
+		shellContainer()
+	case "exec":
+		execInContainer()
+	case "cp":
+		copyFiles()
+	case "portforward":
+		portForward()
 	default:
 		fmt.Printf("未知命令: %s\n", command)
 		printHelp()
@@ -71,32 +81,67 @@ func printHelp() {
   hpcgame <命令> [参数]
 
 可用命令:
-  install     安装并配置必要的组件
-  create      创建一个新的容器
-  ls          列出当前账号的所有容器
-  delete      删除指定的容器
-  help        显示帮助信息
+  install		安装并配置必要的组件
+  ls			列出当前账号的所有容器
+  lspart		列出可用的分区
+  shel			连接到指定容器的终端
+  exec			在指定容器中执行命令
+  cp			在本地和容器之间复制文件
+  create		创建一个新的容器
+  delete		删除指定的容器
+  portforward	设置本地端口到容器端口的转发
+  help			显示帮助信息
 
 install 命令:
   检查并安装kubectl、配置kubeconfig，并为VSCode安装必要的扩展
 
+ls 命令:
+  显示当前账号拥有的所有容器，以及可用的分区信息
+
+lspart 命令:
+  显示可用的分区信息
+
+shell 命令:
+  连接到指定的容器的终端
+  用法: hpcgame shell <容器名称>
+
+exec 命令:
+  在指定的容器中执行命令
+  用法: hpcgame exec <容器名称> <命令>
+
+cp 命令:
+  在本地和容器之间复制文件
+  用法: hpcgame cp <源文件> <目标文件>
+  例如: hpcgame cp ./local-file.txt my-container:/path/to/file.txt
+        hpcgame cp my-container:/path/to/file.txt ./local-file.txt
+
 create 命令:
   创建一个新的容器
   参数:
-    --cpu=<数量>     指定CPU核心数
-    --memory=<大小>  指定内存大小 (例如: 2Gi)
-    --gpu=<数量>     指定GPU数量
-	--partition=<分区>  指定分区名称
-	--image=<镜像>     指定容器镜像
-	--name=<容器名称>  指定容器名称
-	  --help          显示帮助信息
-
-ls 命令:
-  显示当前账号拥有的所有容器，以及可用的分区信息
+    选项:
+    -p, --partition string   指定分区名称
+    -c, --cpu int            指定CPU核心数
+    -m, --memory int         指定内存大小，单位GiB
+    -g, --gpu int            指定GPU数量 (默认为0)
+    -i, --image string       指定容器镜像
+    -n, --name string        指定容器名称 (默认自动生成)
+    -h, --help               显示帮助信息
+  
+  示例:
+    # 创建一个有4个CPU核心、8GiB内存的容器在cpu分区
+    hpcgame create --partition=x86 --cpu=4 --memory=8
+    
+    # 创建一个指定镜像和名称的容器
+    hpcgame create -p cpu -c 1 -i ubuntu:20.04 -n my-container
 
 delete 命令:
   删除指定的容器
   用法: hpcgame delete <容器名称>
+
+portforward 命令:
+  设置本地端口到容器端口的转发
+  用法: hpcgame portforward <容器名称> <本地端口>:<容器端口>
+  例如: hpcgame portforward my-container 8080:80
 `
 	fmt.Println(helpText)
 }
@@ -197,6 +242,131 @@ func listPartitions(partitions []Partition) {
 		}
 		fmt.Println(info)
 		fmt.Println("------------------------------------------------")
+	}
+}
+
+func shellContainer() {
+	kubeconfigPath := getKubeConfig()
+	if kubeconfigPath == "" {
+		return
+	}
+
+	if len(os.Args) < 3 {
+		fmt.Println("请指定要连接的容器名称")
+		fmt.Println("用法: hpcgame shell <容器名称>")
+		return
+	}
+
+	containerName := os.Args[2]
+	fmt.Printf("正在连接到容器 %s...\n", containerName)
+
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "exec", "-it", containerName, "--", "/bin/bash")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("连接到容器失败: %s\n", err)
+		return
+	}
+}
+
+func execInContainer() {
+	kubeconfigPath := getKubeConfig()
+	if kubeconfigPath == "" {
+		return
+	}
+
+	if len(os.Args) < 4 {
+		fmt.Println("请指定要执行的容器名称和命令")
+		fmt.Println("用法: hpcgame exec <容器名称> <命令>")
+		return
+	}
+
+	containerName := os.Args[2]
+	command := os.Args[3:]
+
+	fmt.Printf("在容器 %s 中执行命令: %s\n", containerName, strings.Join(command, " "))
+
+	kubectlArgs := append([]string{"--kubeconfig", kubeconfigPath, "exec", containerName, "--"}, command...)
+	cmd := exec.Command("kubectl", kubectlArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("执行命令失败: %s\n", err)
+		return
+	}
+}
+
+func copyFiles() {
+	kubeconfigPath := getKubeConfig()
+	if kubeconfigPath == "" {
+		return
+	}
+
+	if len(os.Args) < 4 {
+		fmt.Println("请指定源文件和目标文件")
+		fmt.Println("用法: hpcgame cp <源文件> <目标文件>")
+		fmt.Println("例如: hpcgame cp ./local-file.txt my-container:/path/to/file.txt")
+		fmt.Println("      hpcgame cp my-container:/path/to/file.txt ./local-file.txt")
+		return
+	}
+
+	source := os.Args[2]
+	destination := os.Args[3]
+
+	// 处理目标为容器但没有指定路径的情况
+	if strings.Contains(destination, ":") && strings.HasSuffix(destination, ":") {
+		containerName := strings.TrimSuffix(destination, ":")
+		destination = containerName + ":~/"
+		fmt.Printf("⚠️ 未指定目标路径，将复制到容器 %s 的用户主目录\n", containerName)
+	}
+
+	// 处理源为容器但没有指定路径的情况
+	if strings.Contains(source, ":") && strings.HasSuffix(source, ":") {
+		fmt.Println("❌ 错误: 源文件路径不能为空")
+		fmt.Println("用法: hpcgame cp <源文件> <目标文件>")
+		return
+	}
+
+	fmt.Printf("复制文件: %s -> %s\n", source, destination)
+
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "cp", source, destination)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("复制文件失败: %s\n", err)
+		return
+	}
+
+	fmt.Println("✅ 文件复制成功")
+}
+
+func portForward() {
+	kubeconfigPath := getKubeConfig()
+	if kubeconfigPath == "" {
+		return
+	}
+
+	if len(os.Args) < 4 {
+		fmt.Println("请指定容器名称和端口映射")
+		fmt.Println("用法: hpcgame portforward <容器名称> <本地端口>:<容器端口>")
+		fmt.Println("例如: hpcgame portforward my-container 8080:80")
+		return
+	}
+
+	containerName := os.Args[2]
+	portMapping := os.Args[3]
+
+	fmt.Printf("设置端口转发: %s %s\n", containerName, portMapping)
+	fmt.Println("按 Ctrl+C 停止端口转发")
+
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "port-forward", "pod/"+containerName, portMapping)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("设置端口转发失败: %s\n", err)
+		return
 	}
 }
 
@@ -305,7 +475,7 @@ func checkCommandExists(cmd string) bool {
 }
 
 func getKubeconfigFromUser() string {
-	fmt.Println("请输入您的kubeconfig内容 (输入完成后按Ctrl+D或Ctrl+Z结束):")
+	fmt.Println("请输入您的kubeconfig内容，可以前往 https://hpcgame.pku.edu.cn/kube/_/ui/#/tokens/ 获取(输入完成后按Ctrl+D或Ctrl+Z结束):")
 
 	var kubeconfig strings.Builder
 	scanner := bufio.NewScanner(os.Stdin)
@@ -448,105 +618,89 @@ func createContainer() {
 		return
 	}
 
-	// 解析命令行选项
-	var partition string
-	var cpu int
-	var memory int
-	var memoryProvided bool
-	var gpu int
-	var cpuProvided bool
-	var partitionProvided bool
-	var image string
-	var imageProvided bool
-	var name string
-	var nameProvided bool
+	// 创建一个新的标志集
+	createCmd := flag.NewFlagSet("create", flag.ExitOnError)
 
-	// 检查命令行参数
-	for i := 2; i < len(os.Args); i++ {
-		arg := os.Args[i]
-		if strings.HasPrefix(arg, "--partition=") {
-			partition = strings.TrimPrefix(arg, "--partition=")
-			partitionProvided = true
-		} else if strings.HasPrefix(arg, "--cpu=") {
-			cpuValue := strings.TrimPrefix(arg, "--cpu=")
-			parsedCPU, err := strconv.Atoi(cpuValue)
-			if err != nil {
-				fmt.Printf("无效的CPU值: %s\n", cpuValue)
-				return
-			}
-			cpu = parsedCPU
-			cpuProvided = true
-		} else if strings.HasPrefix(arg, "--memory=") {
-			memoryValue := strings.TrimPrefix(arg, "--memory=")
-			parsedMemory, err := strconv.Atoi(strings.TrimSuffix(memoryValue, "Gi"))
-			if err != nil {
-				fmt.Printf("无效的内存值: %s\n", memoryValue)
-				return
-			}
-			memory = parsedMemory
-			memoryProvided = true
-		} else if strings.HasPrefix(arg, "--gpu=") {
-			gpuValue := strings.TrimPrefix(arg, "--gpu=")
-			parsedGPU, err := strconv.Atoi(gpuValue)
-			if err != nil {
-				fmt.Printf("无效的GPU值: %s\n", gpuValue)
-				return
-			}
-			gpu = parsedGPU
-		} else if strings.HasPrefix(arg, "--image=") {
-			image = strings.TrimPrefix(arg, "--image=")
-			imageProvided = true
-		} else if strings.HasPrefix(arg, "--name") {
-			nameValue := strings.TrimPrefix(arg, "--name=")
-			name = nameValue
-			nameProvided = true
-		} else if strings.HasPrefix(arg, "--help") {
-			fmt.Println("用法: hpcgame create [--partition=<分区>] [--cpu=<数量>] [--memory=<大小>] [--gpu=<数量>] [--image=<镜像>] [--name=<容器名称>]")
-			fmt.Println("分区: 可用分区名称")
-			fmt.Println("CPU: 指定CPU核心数")
-			fmt.Println("内存: 指定内存大小，单位GiB (例如: 2)")
-			fmt.Println("GPU: 指定GPU数量")
-			fmt.Println("镜像: 指定容器镜像")
-			fmt.Println("容器名称: 指定容器名称")
-		} else {
-			fmt.Printf("未知参数: %s\n", arg)
-			return
-		}
+	// 定义命令行选项
+	partitionFlag := createCmd.String("partition", "", "指定分区名称")
+	cpuFlag := createCmd.Int("cpu", 0, "指定CPU核心数")
+	memoryFlag := createCmd.Int("memory", 0, "指定内存大小，单位GiB")
+	gpuFlag := createCmd.Int("gpu", 0, "指定GPU数量")
+	imageFlag := createCmd.String("image", "", "指定容器镜像")
+	nameFlag := createCmd.String("name", "", "指定容器名称")
+	helpFlag := createCmd.Bool("help", false, "显示帮助信息")
+
+	// 支持短标志
+	createCmd.StringVar(partitionFlag, "p", "", "指定分区名称 (简写)")
+	createCmd.IntVar(cpuFlag, "c", 0, "指定CPU核心数 (简写)")
+	createCmd.IntVar(memoryFlag, "m", 0, "指定内存大小，单位GiB (简写)")
+	createCmd.IntVar(gpuFlag, "g", 0, "指定GPU数量 (简写)")
+	createCmd.StringVar(imageFlag, "i", "", "指定容器镜像 (简写)")
+	createCmd.StringVar(nameFlag, "n", "", "指定容器名称 (简写)")
+	createCmd.BoolVar(helpFlag, "h", false, "显示帮助信息 (简写)")
+
+	// 解析命令行参数
+	if len(os.Args) < 3 {
+		createCmd.Usage()
+		return
 	}
 
+	err := createCmd.Parse(os.Args[2:])
+	if err != nil {
+		fmt.Printf("解析参数失败: %s\n", err)
+		return
+	}
+
+	// 显示帮助
+	if *helpFlag {
+		fmt.Println("用法: hpcgame create [选项]")
+		fmt.Println("选项:")
+		createCmd.PrintDefaults()
+		return
+	}
+
+	// 获取分区信息
 	partitions := getPartitions()
+	if partitions == nil {
+		fmt.Println("获取分区信息失败")
+		return
+	}
+
+	// 处理分区
 	partitionStruct := Partition{}
+	partition := *partitionFlag
+
 	// 如果没有提供分区，交互式询问
-	if !partitionProvided {
+	if partition == "" {
 		listPartitions(partitions)
 		fmt.Print("请输入分区名称: ")
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
 			partition = scanner.Text()
-			partitionProvided = true
 		} else {
 			fmt.Println("读取输入失败")
 			return
 		}
 	}
+
 	// 检查分区是否有效
-	if partitionProvided {
-		validPartition := false
-		for _, p := range partitions {
-			if p.Name == partition {
-				validPartition = true
-				partitionStruct = p
-				break
-			}
-		}
-		if !validPartition {
-			fmt.Printf("无效的分区名称: %s\n", partition)
-			return
+	validPartition := false
+	for _, p := range partitions {
+		if p.Name == partition {
+			validPartition = true
+			partitionStruct = p
+			break
 		}
 	}
+	if !validPartition {
+		fmt.Printf("无效的分区名称: %s\n", partition)
+		listPartitions(partitions)
+		return
+	}
 
-	// 如果没有提供CPU，交互式询问
-	if !cpuProvided {
+	// 处理CPU
+	cpu := *cpuFlag
+	if cpu == 0 {
 		fmt.Print("请输入CPU核心数: ")
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
@@ -569,19 +723,26 @@ func createContainer() {
 		return
 	}
 
-	// 如果没有提供内存，设置默认值
-	if !memoryProvided {
+	// 处理内存
+	memory := *memoryFlag
+	if memory == 0 {
+		// 设置默认值
 		memory = cpu * 2
 		fmt.Printf("未指定内存，使用默认值: %dGiB\n", memory)
 	}
 
+	// 检查内存值是否有效
 	if memory <= 0 || memory > partitionStruct.MemoryLimit {
 		fmt.Printf("无效的内存值: %dGi, 分区限制: %dGi\n", memory, partitionStruct.MemoryLimit)
 		return
 	}
 
-	// 如果没有提供镜像，交互式询问，提供默认值：分区的第一个镜像
-	if !imageProvided {
+	// 处理GPU
+	gpu := *gpuFlag
+
+	// 处理镜像
+	image := *imageFlag
+	if image == "" {
 		if len(partitionStruct.Images) > 0 {
 			image = partitionStruct.Images[0]
 			fmt.Printf("未指定镜像，使用默认值: %s\n", image)
@@ -598,16 +759,17 @@ func createContainer() {
 		}
 	}
 
-	// 生成容器名
-	if !nameProvided {
+	// 处理容器名称
+	name := *nameFlag
+	if name == "" {
 		name = fmt.Sprintf("container-%d", os.Getpid())
 	}
 
 	// 创建容器
 	fmt.Printf("正在创建容器 %s...\n", name)
-	err := deployContainer(kubeconfigPath, partitionStruct, name, cpu, memory, gpu, image)
-	if err != nil {
-		fmt.Printf("创建容器失败: %s\n", err)
+	createErr := deployContainer(kubeconfigPath, partitionStruct, name, cpu, memory, gpu, image)
+	if createErr != nil {
+		fmt.Printf("创建容器失败: %s\n", createErr)
 		return
 	}
 
@@ -718,7 +880,7 @@ func deleteContainer() {
 	}
 
 	containerName := os.Args[2]
-	fmt.Printf("正在删除容器 %s...\n", containerName)
+	fmt.Printf("正在删除容器 %s，请等待...\n", containerName)
 
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "delete", "pod", containerName)
 	cmd.Stdout = os.Stdout
