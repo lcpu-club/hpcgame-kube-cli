@@ -190,22 +190,8 @@ func installKubectl() {
 
 	var cmd *exec.Cmd
 
-	kubectl_url := "https://dl.k8s.io/release/stable.txt"
-	resp, err := http.Get(kubectl_url)
-	if err != nil {
-		fmt.Printf("获取kubectl版本失败: %s\n", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("获取kubectl版本失败: %s\n", resp.Status)
-		return
-	}
-	version, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("读取kubectl版本失败: %s\n", err)
-		return
-	}
+	// TODO: Fix if update kubectl version
+	version := "v1.32.3"
 
 	switch runtime.GOOS {
 	case "darwin": // macOS
