@@ -563,7 +563,7 @@ func checkCommandExists(cmd string) bool {
 }
 
 func getKubeconfigFromUser() string {
-	fmt.Println("请输入您的kubeconfig内容，可以前往 https://hpcgame.pku.edu.cn/kube/_/ui/#/tokens/ 获取(输入完成后按Ctrl+D或Ctrl+Z结束):")
+	fmt.Println("请输入您的kubeconfig内容，可以前往 https://hpcgame.pku.edu.cn/kube/_/ui/#/tokens/ 获取。输入完成后按Ctrl+D（linux、macOS）或Ctrl+Z（windows）结束:")
 
 	var kubeconfig strings.Builder
 	scanner := bufio.NewScanner(os.Stdin)
