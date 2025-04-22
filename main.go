@@ -190,6 +190,23 @@ func installKubectl() {
 
 	var cmd *exec.Cmd
 
+	kubectl_url := "https://dl.k8s.io/release/stable.txt"
+	resp, err := http.Get(kubectl_url)
+	if err != nil {
+		fmt.Printf("获取kubectl版本失败: %s\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("获取kubectl版本失败: %s\n", resp.Status)
+		return
+	}
+	version, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("读取kubectl版本失败: %s\n", err)
+		return
+	}
+
 	switch runtime.GOOS {
 	case "darwin": // macOS
 		if checkCommandExists("brew") {
@@ -200,19 +217,90 @@ func installKubectl() {
 		}
 
 	case "linux":
+		// 默认下载到/usr/local/bin，询问用户，如果反对，下载到~/.hpcgame/bin，并增加到PATH
+		fmt.Println("请问您要将kubectl安装到/usr/local/bin还是~/.hpcgame/bin？")
+		fmt.Println("1. /usr/local/bin【默认】")
+		fmt.Println("2. ~/.hpcgame/bin")
+		fmt.Print("请输入选项 (1/2): ")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		option := scanner.Text()
+		var installPath string
+		if option == "2" {
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				fmt.Printf("获取用户主目录失败: %s\n", err)
+				return
+			}
+			installPath = filepath.Join(homeDir, kubeconfigDir, "bin")
+			err = os.MkdirAll(installPath, 0700)
+			if err != nil {
+				fmt.Printf("创建目录失败: %s\n", err)
+				return
+			}
+			fmt.Printf("请将%s添加到PATH中\n", installPath)
+		} else {
+			installPath = "/usr/local/bin"
+		}
 		cmd = exec.Command("bash", "-c",
-			"curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl && "+
-				"chmod +x kubectl && sudo mv kubectl /usr/local/bin/")
+			"curl -LO https://dl.k8s.io/release/"+string(version)+"/bin/linux/amd64/kubectl && "+
+				"chmod +x kubectl && "+
+				"sudo mv kubectl "+installPath)
+		if option == "2" {
+			fmt.Printf("请将%s添加到PATH中，是否由本程序修改.bashrc与.zshrc？(Y/n): ", installPath)
+			scanner.Scan()
+			addToPath := scanner.Text()
+			// modify PATH for this session to make it work
+			os.Setenv("PATH", os.Getenv("PATH")+":"+installPath)
+			if addToPath != "Y" && addToPath != "y" && addToPath != "" {
+				fmt.Printf("请手动将%s添加到PATH中\n", installPath)
+			} else {
+				// add to .bash
+				bashrcPath := filepath.Join(os.Getenv("HOME"), ".bashrc")
+				zshrcPath := filepath.Join(os.Getenv("HOME"), ".zshrc")
+				if _, err := os.Stat(bashrcPath); err == nil {
+					// bash
+					f, err := os.OpenFile(bashrcPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+					if err != nil {
+						fmt.Printf("打开.bashrc失败: %s\n", err)
+						return
+					}
+					defer f.Close()
+					if _, err := f.WriteString(fmt.Sprintf("\nexport PATH=$PATH:%s\n", installPath)); err != nil {
+						fmt.Printf("写入.bashrc失败: %s\n", err)
+						return
+					}
+					fmt.Printf("已将%s添加到.bashrc\n", installPath)
+				}
+				if _, err := os.Stat(zshrcPath); err == nil {
+					// zsh, if .zshrc exists
+					if _, err := os.Stat(zshrcPath); err == nil {
+						f, err := os.OpenFile(zshrcPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+						if err != nil {
+							fmt.Printf("打开.zshrc失败: %s\n", err)
+							return
+						}
+						defer f.Close()
+						if _, err := f.WriteString(fmt.Sprintf("\nexport PATH=$PATH:%s\n", installPath)); err != nil {
+							fmt.Printf("写入.zshrc失败: %s\n", err)
+							return
+						}
+						fmt.Printf("已将%s添加到.zshrc\n", installPath)
+					}
+				}
+			}
+		}
 
 	case "windows":
 		// 下载kubectl，先尝试winget，然后下载并提示用户放进PATH
 		cmd = exec.Command("powershell", "-Command",
 			"if (Get-Command winget -ErrorAction SilentlyContinue) { "+
-				"winget install --id Microsoft.Kubernetes-CLI -e } else { "+
-				"$url = 'https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/windows/amd64/kubectl.exe'; "+
+				"winget install --id Kubernetes.kubectl -e } else { "+
+				"$url = \"https://dl.k8s.io/release/"+string(version)+"/bin/windows/amd64/kubectl.exe\"; "+
 				"$output = 'kubectl.exe'; "+
 				"Invoke-WebRequest -Uri $url -OutFile $output; "+
-				"Write-Host '请将kubectl.exe移动到PATH中的目录，例如C:\\Windows\\System32' }")
+				"Write-Host '请将kubectl.exe移动到PATH中的目录，例如C:\\Windows\\System32'; "+
+				"Write-Host '或者手动安装kubectl。教程：https://kubernetes.io/docs/tasks/tools/install-kubectl-windows/'; }")
 
 	default:
 		fmt.Printf("不支持的操作系统: %s\n", runtime.GOOS)
