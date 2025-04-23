@@ -308,7 +308,7 @@ func listPartitions(partitions []Partition) {
 		info := fmt.Sprintf("[%d]分区: %s \n\t简介: %s \n\tCPU限制: %d \n\t内存限制: %dGiB \n",
 			cnt, partition.Name, partition.Description, partition.CPULimit, partition.MemoryLimit)
 		if partition.GPUTag != "" {
-			info += fmt.Sprintf("\n\t可用GPU: %s \n", partition.GPUName)
+			info += fmt.Sprintf("\t可用GPU: %s \n", partition.GPUName)
 		}
 		info += "\t验证过的镜像列表（也可以使用自定义镜像）: "
 		for cmti, image := range partition.Images {
