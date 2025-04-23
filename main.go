@@ -716,7 +716,6 @@ func createContainer() {
 	// 解析命令行参数
 	if len(os.Args) < 3 {
 		createCmd.Usage()
-		return
 	}
 
 	err := createCmd.Parse(os.Args[2:])
