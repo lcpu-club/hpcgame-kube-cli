@@ -851,6 +851,10 @@ func createContainer() {
 }
 
 func deployContainer(kubeconfigPath string, partition Partition, name string, cpu int, memory int, gpu int, image string) error {
+	gpulimit := ""
+	if gpu > 0 {
+		gpulimit = fmt.Sprintf("%s: %d", partition.GPUTag, gpu)
+	}
 	// 生成YAML配置
 	yamlConfig := fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -870,17 +874,13 @@ spec:
       requests:
         cpu: %dm
         memory: %dGi
-`, name, partition.Name, image, cpu*1000, memory)
-	// 如果有GPU
-	if gpu > 0 {
-		gpulimit := fmt.Sprintf("%s: %d", partition.GPUTag, gpu)
-		yamlConfig += fmt.Sprintf(`        %s
+        %s
       limits:
         cpu: %dm
         memory: %dGi
         %s
-`, gpulimit, cpu*1000, memory, gpulimit)
-	}
+  restartPolicy: Never
+`, name, partition.Name, image, cpu*1000, memory, gpulimit, cpu*1000, memory, gpulimit)
 
 	// if debug mode, print yamlConfig
 	if os.Getenv("DEBUG") != "" {
