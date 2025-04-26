@@ -39,6 +39,15 @@ type Partition struct {
 	MemoryLimit int // in GiB
 }
 
+type PersistentVolume struct {
+	Name         string
+	Size         string
+	StorageClass string
+	AccessMode   string
+	Status       string
+	IsDefault    bool
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printHelp()
@@ -68,6 +77,8 @@ func main() {
 		copyFiles()
 	case "portforward":
 		portForward()
+	case "volume":
+		handleVolumeCommands()
 	default:
 		fmt.Printf("未知命令: %s\n", command)
 		printHelp()
@@ -84,12 +95,13 @@ func printHelp() {
   install		安装并配置必要的组件
   ls			列出当前账号的所有容器
   lspart		列出可用的分区
-  shel			连接到指定容器的终端
+  shell			连接到指定容器的终端
   exec			在指定容器中执行命令
   cp			在本地和容器之间复制文件
   create		创建一个新的容器
   delete		删除指定的容器
   portforward	设置本地端口到容器端口的转发
+  volume			管理持久卷
   help			显示帮助信息
 
 install 命令:
@@ -125,14 +137,18 @@ create 命令:
     -g, --gpu int            指定GPU数量 (默认为0)
     -i, --image string       指定容器镜像
     -n, --name string        指定容器名称 (默认自动生成)
+    -v, --volumes string     指定额外挂载的持久卷，多个卷用逗号分隔
     -h, --help               显示帮助信息
   
   示例:
     # 创建一个有4个CPU核心、8GiB内存的容器在cpu分区
     hpcgame create --partition=x86 --cpu=4 --memory=8
     
-    # 创建一个指定镜像和名称的容器
-    hpcgame create -p cpu -c 1 -i ubuntu:20.04 -n my-container
+    # 创建一个指定镜像和名称的容器，并挂载额外的持久卷
+    hpcgame create -p cpu -c 1 -i ubuntu:20.04 -n my-container -v my-data,shared-data
+    
+    # 注意: 分区默认持久卷将自动挂载到 /partition-data (默认工作目录)
+    # 额外指定的持久卷将挂载到 /mnt/<持久卷名称>
 
 delete 命令:
   删除指定的容器
@@ -142,6 +158,19 @@ portforward 命令:
   设置本地端口到容器端口的转发
   用法: hpcgame portforward <容器名称> <本地端口>:<容器端口>
   例如: hpcgame portforward my-container 8080:80
+
+volume 命令:
+  管理持久卷
+  子命令:
+    ls        列出所有持久卷
+    create    创建新的持久卷
+    delete    删除指定的持久卷 (默认持久卷不可删除)
+  用法:
+    hpcgame volume ls
+    hpcgame volume create <名称> <大小> <存储类> [访问模式]
+    hpcgame volume delete <名称>
+  例如:
+    hpcgame volume create my-data 10Gi x86-amd-default-sc ReadWriteMany
 `
 	fmt.Println(helpText)
 }
@@ -703,6 +732,7 @@ func createContainer() {
 	imageFlag := createCmd.String("image", "", "指定容器镜像")
 	nameFlag := createCmd.String("name", "", "指定容器名称")
 	helpFlag := createCmd.Bool("help", false, "显示帮助信息")
+	volumesFlag := createCmd.String("volumes", "", "指定额外挂载的持久卷，多个卷用逗号分隔")
 
 	// 支持短标志
 	createCmd.StringVar(partitionFlag, "p", "", "指定分区名称 (简写)")
@@ -712,6 +742,7 @@ func createContainer() {
 	createCmd.StringVar(imageFlag, "i", "", "指定容器镜像 (简写)")
 	createCmd.StringVar(nameFlag, "n", "", "指定容器名称 (简写)")
 	createCmd.BoolVar(helpFlag, "h", false, "显示帮助信息 (简写)")
+	createCmd.StringVar(volumesFlag, "v", "", "指定额外挂载的持久卷，多个卷用逗号分隔 (简写)")
 
 	// 解析命令行参数
 	if len(os.Args) < 3 {
@@ -832,6 +863,26 @@ func createContainer() {
 		}
 	}
 
+	var extraVolumes []string
+	if *volumesFlag != "" {
+		extraVolumes = strings.Split(*volumesFlag, ",")
+		// 去除空白
+		for i, vol := range extraVolumes {
+			extraVolumes[i] = strings.TrimSpace(vol)
+		}
+
+		// 检查指定的持久卷是否存在
+		for _, vol := range extraVolumes {
+			cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pvc", vol)
+			err := cmd.Run()
+			if err != nil {
+				fmt.Printf("警告: 持久卷 %s 可能不存在，请检查名称或使用 'hpcgame volume ls' 查看可用持久卷\n", vol)
+				// 询问是否继续
+				// ...
+			}
+		}
+	}
+
 	// 处理容器名称
 	name := *nameFlag
 	if name == "" {
@@ -840,20 +891,46 @@ func createContainer() {
 
 	// 创建容器
 	fmt.Printf("正在创建容器 %s...\n", name)
-	createErr := deployContainer(kubeconfigPath, partitionStruct, name, cpu, memory, gpu, image)
+	createErr := deployContainer(kubeconfigPath, partitionStruct, name, cpu, memory, gpu, image, extraVolumes)
 	if createErr != nil {
 		fmt.Printf("创建容器失败: %s\n", createErr)
 		return
 	}
 
-	fmt.Printf("✅ 容器 %s 创建请求已发起\n", name)
 }
 
-func deployContainer(kubeconfigPath string, partition Partition, name string, cpu int, memory int, gpu int, image string) error {
+func deployContainer(kubeconfigPath string, partition Partition, name string, cpu int, memory int, gpu int, image string, extraVolumes []string) error {
 	gpulimit := ""
 	if gpu > 0 {
 		gpulimit = fmt.Sprintf("%s: %d", partition.GPUTag, gpu)
 	}
+
+	partitionName := partition.Name
+	err := ensurePartitionDefaultVolume(kubeconfigPath, partitionName)
+	if err != nil {
+		fmt.Printf("警告：无法创建默认持久卷：%s\n", err)
+		// 不终止容器创建过程，继续但不挂载持久卷
+	}
+
+	partitionDash := strings.ReplaceAll(partitionName, "_", "-")
+	defaultVolumeName := fmt.Sprintf("%s-default-pvc", partitionDash)
+
+	volumeMountsStr := `    volumeMounts:
+    - name: default-data-volume
+      mountPath: /partition-data
+`
+	volumesStr := `  volumes:
+  - name: default-data-volume
+    persistentVolumeClaim:
+      claimName: ` + defaultVolumeName + `
+`
+
+	for i, volumeName := range extraVolumes {
+		mountName := fmt.Sprintf("extra-volume-%d", i)
+		volumeMountsStr += fmt.Sprintf("    - name: %s\n      mountPath: /mnt/%s\n", mountName, volumeName)
+		volumesStr += fmt.Sprintf("  - name: %s\n    persistentVolumeClaim:\n      claimName: %s\n", mountName, volumeName)
+	}
+
 	// 生成YAML配置
 	yamlConfig := fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -869,6 +946,7 @@ spec:
         add: ["SYS_PTRACE", "IPC_LOCK"]
     image: %s
     command: ["sleep", "infinity"]
+    workingDir: /partition-data
     resources:
       requests:
         cpu: %dm
@@ -878,8 +956,10 @@ spec:
         cpu: %dm
         memory: %dGi
         %s
+%s
+%s
   restartPolicy: Never
-`, name, partition.Name, image, cpu*1000, memory, gpulimit, cpu*1000, memory, gpulimit)
+`, name, partition.Name, image, cpu*1000, memory, gpulimit, cpu*1000, memory, gpulimit, volumeMountsStr, volumesStr)
 
 	// if debug mode, print yamlConfig
 	if os.Getenv("DEBUG") != "" {
@@ -907,6 +987,9 @@ spec:
 	if err != nil {
 		return fmt.Errorf("部署容器失败: %s\n%s", err, stderr.String())
 	}
+
+	fmt.Printf("✅ 容器 %s 创建请求已发起\n", name)
+	fmt.Printf("  - 分区默认持久卷 (%s) 已挂载到 /partition-data (默认工作目录)\n", defaultVolumeName)
 
 	return nil
 }
@@ -964,4 +1047,267 @@ func deleteContainer() {
 	}
 
 	fmt.Printf("✅ 容器 %s 已删除\n", containerName)
+}
+
+func ensurePartitionDefaultVolume(kubeconfigPath string, partition string) error {
+	// 转换分区名称：将下划线替换为连字符
+	partitionDash := strings.ReplaceAll(partition, "_", "-")
+
+	// 构造默认持久卷的名称
+	defaultVolumeName := fmt.Sprintf("%s-default-pvc", partitionDash)
+
+	// 检查是否已存在
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pvc", defaultVolumeName)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	// 如果持久卷已存在，直接返回
+	if err == nil {
+		fmt.Printf("默认持久卷 %s 已存在\n", defaultVolumeName)
+		return nil
+	}
+
+	// 构造Storage Class名称
+	storageClassName := fmt.Sprintf("%s-default-sc", partitionDash)
+
+	// 创建默认持久卷 (200Gi, ReadWriteMany)
+	pvcYAML := fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: %s
+spec:
+  storageClassName: %s
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 200Gi
+`, defaultVolumeName, storageClassName)
+
+	// 创建临时文件
+	tmpFile, err := os.CreateTemp("", "pvc-*.yaml")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %s", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(pvcYAML); err != nil {
+		return fmt.Errorf("写入临时文件失败: %s", err)
+	}
+	tmpFile.Close()
+
+	// 应用持久卷配置
+	cmd = exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", tmpFile.Name())
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	if err != nil {
+		return fmt.Errorf("创建默认持久卷失败: %s\n%s", err, stderr.String())
+	}
+
+	fmt.Printf("✅ 默认持久卷 %s 创建成功\n", defaultVolumeName)
+	return nil
+}
+
+func listVolumes(kubeconfigPath string) error {
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pvc", "-o", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("获取持久卷列表失败: %s", err)
+	}
+
+	var pvcList struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				StorageClassName string `json:"storageClassName"`
+				Resources        struct {
+					Requests struct {
+						Storage string `json:"storage"`
+					} `json:"requests"`
+				} `json:"resources"`
+				AccessModes []string `json:"accessModes"`
+			} `json:"spec"`
+			Status struct {
+				Phase string `json:"phase"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+
+	err = json.Unmarshal(output, &pvcList)
+	if err != nil {
+		return fmt.Errorf("解析持久卷列表失败: %s", err)
+	}
+
+	fmt.Println("持久卷列表:")
+	fmt.Println("===============================================================================")
+	fmt.Printf("%-25s %-15s %-20s %-15s %-10s %s\n", "名称", "大小", "存储类", "访问模式", "状态", "备注")
+	fmt.Println("-------------------------------------------------------------------------------")
+
+	for _, pvc := range pvcList.Items {
+		isDefault := strings.Contains(pvc.Metadata.Name, "-default-pvc")
+		accessModes := strings.Join(pvc.Spec.AccessModes, ",")
+		notes := ""
+		if isDefault {
+			notes = "默认持久卷 (不可删除)"
+		}
+
+		fmt.Printf("%-25s %-15s %-20s %-15s %-10s %s\n",
+			pvc.Metadata.Name,
+			pvc.Spec.Resources.Requests.Storage,
+			pvc.Spec.StorageClassName,
+			accessModes,
+			pvc.Status.Phase,
+			notes)
+	}
+	fmt.Println("===============================================================================")
+	return nil
+}
+
+// 创建持久卷
+func createVolume(kubeconfigPath string, name string, size string, storageClass string, accessMode string) error {
+	// 检查是否为默认持久卷
+	if strings.Contains(name, "-default-pvc") {
+		return fmt.Errorf("不能创建名称包含'-default-pvc'的持久卷，这是保留的命名格式")
+	}
+
+	// 创建持久卷YAML (底层仍使用PVC)
+	pvcYAML := fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: %s
+spec:
+  storageClassName: %s
+  accessModes:
+    - %s
+  resources:
+    requests:
+      storage: %s
+`, name, storageClass, accessMode, size)
+
+	// 创建临时文件
+	tmpFile, err := os.CreateTemp("", "pvc-*.yaml")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %s", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(pvcYAML); err != nil {
+		return fmt.Errorf("写入临时文件失败: %s", err)
+	}
+	tmpFile.Close()
+
+	// 应用持久卷配置
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", tmpFile.Name())
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	if err != nil {
+		return fmt.Errorf("创建持久卷失败: %s\n%s", err, stderr.String())
+	}
+
+	fmt.Printf("✅ 持久卷 %s 创建成功\n", name)
+	return nil
+}
+
+// 删除持久卷
+func deleteVolume(kubeconfigPath string, name string) error {
+	// 检查是否为默认持久卷
+	if strings.Contains(name, "-default-pvc") {
+		return fmt.Errorf("不能删除默认持久卷: %s", name)
+	}
+
+	// 删除持久卷
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "delete", "pvc", name)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	if err != nil {
+		return fmt.Errorf("删除持久卷失败: %s\n%s", err, stderr.String())
+	}
+
+	fmt.Printf("✅ 持久卷 %s 已删除\n", name)
+	return nil
+}
+
+// 处理持久卷相关命令
+func handleVolumeCommands() {
+	if len(os.Args) < 3 {
+		printVolumeHelp()
+		return
+	}
+
+	kubeconfigPath := getKubeConfig()
+	if kubeconfigPath == "" {
+		return
+	}
+
+	subCommand := os.Args[2]
+
+	switch subCommand {
+	case "ls":
+		err := listVolumes(kubeconfigPath)
+		if err != nil {
+			fmt.Printf("列出持久卷失败: %s\n", err)
+		}
+	case "create":
+		if len(os.Args) < 6 {
+			fmt.Println("参数不足，用法: hpcgame volume create <名称> <大小> <存储类> [访问模式]")
+			fmt.Println("例如: hpcgame volume create my-data 10Gi x86-amd-default-sc ReadWriteMany")
+			return
+		}
+		name := os.Args[3]
+		size := os.Args[4]
+		storageClass := os.Args[5]
+		accessMode := "ReadWriteMany" // 默认值
+		if len(os.Args) > 6 {
+			accessMode = os.Args[6]
+		}
+
+		err := createVolume(kubeconfigPath, name, size, storageClass, accessMode)
+		if err != nil {
+			fmt.Printf("创建持久卷失败: %s\n", err)
+		}
+	case "delete":
+		if len(os.Args) < 4 {
+			fmt.Println("参数不足，用法: hpcgame volume delete <名称>")
+			fmt.Println("例如: hpcgame volume delete my-data")
+			return
+		}
+		name := os.Args[3]
+		err := deleteVolume(kubeconfigPath, name)
+		if err != nil {
+			fmt.Printf("删除持久卷失败: %s\n", err)
+		}
+	default:
+		fmt.Printf("未知的持久卷子命令: %s\n", subCommand)
+		printVolumeHelp()
+	}
+}
+
+// 打印持久卷帮助信息
+func printVolumeHelp() {
+	helpText := `持久卷命令用法:
+  hpcgame volume ls                                  列出所有持久卷
+  hpcgame volume create <名称> <大小> <存储类> [访问模式]  创建新的持久卷
+  hpcgame volume delete <名称>                        删除指定的持久卷 (默认持久卷不可删除)
+
+例如:
+  hpcgame volume ls
+  hpcgame volume create my-data 10Gi x86-amd-default-sc ReadWriteMany
+  hpcgame volume delete my-data
+  
+注意:
+  - 默认持久卷 (名称包含-default-pvc的) 不能被删除
+  - 如果不指定访问模式，默认为ReadWriteMany
+  - 大小必须包含单位，如Gi、Mi等
+`
+	fmt.Println(helpText)
 }
