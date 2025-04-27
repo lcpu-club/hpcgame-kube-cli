@@ -20,6 +20,7 @@ import (
 const (
 	kubeconfigDir  = ".hpcgame"
 	kubeconfigFile = "kubeconfig"
+	version        = "0.4.0"
 )
 
 type Container struct {
@@ -61,152 +62,144 @@ func main() {
 		install()
 	case "help":
 		printHelp()
+	case "version":
+		fmt.Printf("HPCGame CLI version %s\n", version)
+	// Original commands
 	case "create":
 		createContainer()
+	case "shell":
+		shellContainer()
 	case "ls":
 		listContainers()
 	case "lspart":
 		listPartitions(getPartitions())
 	case "delete":
 		deleteContainer()
-	case "shell":
-		shellContainer()
+	// Docker-like commands
+	case "run":
+		runContainer()
+	case "ps", "container", "containers":
+		listContainers()
+	case "images", "image":
+		listImages()
 	case "exec":
 		execInContainer()
 	case "cp":
 		copyFiles()
-	case "portforward":
+	case "port", "ports", "portforward":
 		portForward()
-	case "volume":
+	case "pull":
+		fmt.Println("Images are pre-pulled in the HPCGame environment")
+	case "rm", "kill", "stop":
+		deleteContainer()
+	case "volume", "volumes":
 		handleVolumeCommands()
 	default:
-		fmt.Printf("未知命令: %s\n", command)
+		fmt.Printf("Unknown command: %s\n", command)
 		printHelp()
 	}
 }
 
 func printHelp() {
-	helpText := `HPCGame CLI 工具
+	helpText := `HPCGame CLI Tool with Docker-compatible commands
 
-用法:
-  hpcgame <命令> [参数]
+Usage:
+  hpcgame <command> [options]
 
-可用命令:
-  install		安装并配置必要的组件
-  ls			列出当前账号的所有容器
-  lspart		列出可用的分区
-  shell			连接到指定容器的终端
-  exec			在指定容器中执行命令
-  cp			在本地和容器之间复制文件
-  create		创建一个新的容器
-  delete		删除指定的容器
-  portforward	设置本地端口到容器端口的转发
-  volume			管理持久卷
-  help			显示帮助信息
+Original Commands:
+  install         Install and configure required components
+  create          Create a new container
+  ls              List containers for current account
+  lspart          List available partitions
+  shell           Connect to container terminal
+  delete          Delete a container
+  portforward     Set up port forwarding
+  volume          Manage persistent volumes
 
-install 命令:
-  检查并安装kubectl、配置kubeconfig，并为VSCode安装必要的扩展
+Docker-compatible Commands:
+  run             Create and run a new container (alternative to create)
+  ps              List running containers (same as ls)
+  images          List available images for each partition
+  exec            Execute a command in a running container
+  cp              Copy files between local and container
+  rm              Remove a container (same as delete)
+  port            Forward port (same as portforward)
 
-ls 命令:
-  显示当前账号拥有的所有容器，以及可用的分区信息
-
-lspart 命令:
-  显示可用的分区信息
-
-shell 命令:
-  连接到指定的容器的终端
-  用法: hpcgame shell <容器名称>
-
-exec 命令:
-  在指定的容器中执行命令
-  用法: hpcgame exec <容器名称> <命令>
-
-cp 命令:
-  在本地和容器之间复制文件
-  用法: hpcgame cp <源文件> <目标文件>
-  例如: hpcgame cp ./local-file.txt my-container:/path/to/file.txt
-        hpcgame cp my-container:/path/to/file.txt ./local-file.txt
-
-create 命令:
-  创建一个新的容器
-  参数:
-    选项:
-    -p, --partition string   指定分区名称
-    -c, --cpu int            指定CPU核心数
-    -m, --memory int         指定内存大小，单位GiB
-    -g, --gpu int            指定GPU数量 (默认为0)
-    -i, --image string       指定容器镜像
-    -n, --name string        指定容器名称 (默认自动生成)
-    -v, --volumes string     指定额外挂载的持久卷，多个卷用逗号分隔
-    -h, --help               显示帮助信息
+Options for create/run command:
+  -p, --partition STRING  Specify partition name
+  -c, --cpu INT           Number of CPUs
+  -m, --memory INT        Memory in GiB
+  -g, --gpu INT           Number of GPUs (default: 0)
+  -v, --volume LIST       Mount volumes (comma-separated)
+  -i, --image STRING      Specify container image
+  -n, --name STRING       Assign a name to the container
   
-  示例:
-    # 创建一个有4个CPU核心、8GiB内存的容器在cpu分区
-    hpcgame create --partition=x86 --cpu=4 --memory=8
-    
-    # 创建一个指定镜像和名称的容器，并挂载额外的持久卷
-    hpcgame create -p cpu -c 1 -i ubuntu:20.04 -n my-container -v my-data,shared-data
-    
-    # 注意: 分区默认持久卷将自动挂载到 /partition-data (默认工作目录)
-    # 额外指定的持久卷将挂载到 /mnt/<持久卷名称>
+Examples:
+  # Create a container with 4 CPUs and 8GiB RAM in the x86 partition
+  hpcgame create -p x86 -c 4 -m 8
+  
+  # Docker-style alternative to create container
+  hpcgame run -p gpu -g 1 -v my-data,shared-data -n my-gpu-container pytorch/pytorch
+  
+  # Connect to container shell (original method)
+  hpcgame shell my-container
+  
+  # Execute commands in container (Docker-style)
+  hpcgame exec -it my-container bash
+  
+  # Copy files to/from a container
+  hpcgame cp ./local-file.txt my-container:/path/file.txt
+  hpcgame cp my-container:/path/file.txt ./local-copy.txt
+  
+  # Port forwarding
+  hpcgame portforward my-container 8080:80
+  # or Docker-style alternative
+  hpcgame port my-container 8080:80
 
-delete 命令:
-  删除指定的容器
-  用法: hpcgame delete <容器名称>
+Volume Commands:
+  hpcgame volume ls                                     List all volumes
+  hpcgame volume create NAME SIZE STORAGE_CLASS [MODE]  Create a new volume
+  hpcgame volume rm NAME                                Delete a volume
 
-portforward 命令:
-  设置本地端口到容器端口的转发
-  用法: hpcgame portforward <容器名称> <本地端口>:<容器端口>
-  例如: hpcgame portforward my-container 8080:80
-
-volume 命令:
-  管理持久卷
-  子命令:
-    ls        列出所有持久卷
-    create    创建新的持久卷
-    delete    删除指定的持久卷 (默认持久卷不可删除)
-  用法:
-    hpcgame volume ls
-    hpcgame volume create <名称> <大小> <存储类> [访问模式]
-    hpcgame volume delete <名称>
-  例如:
-    hpcgame volume create my-data 10Gi x86-amd-default-sc ReadWriteMany
+Note:
+  - Default partition volume is automatically mounted to /partition-data
+  - Additional volumes are mounted to /mnt/VOLUME_NAME
 `
 	fmt.Println(helpText)
 }
 
 func install() {
-	// 1. 检查kubectl是否安装
+	// 1. Check if kubectl is installed
 	if !checkKubectlInstalled() {
 		installKubectl()
 	} else {
-		fmt.Println("✅ kubectl 已安装")
+		fmt.Println("✅ kubectl is already installed")
 	}
 
-	// 2. 输入kubeconfig并检查有效性
+	// 2. Get kubeconfig from user and validate
 	kubeconfig := getKubeconfigFromUser()
 	if !validateKubeconfig(kubeconfig) {
-		fmt.Println("❌ 提供的kubeconfig无效，请检查并重试")
+		fmt.Println("❌ Invalid kubeconfig provided. Please check and try again.")
 		return
 	}
 
-	// 3. 保存kubeconfig到指定目录
+	// 3. Save kubeconfig
 	saveKubeconfig(kubeconfig)
 
-	// 4. 安装VSCode扩展
+	// 4. Install VSCode extensions if available
 	installVSCodeExtensions()
 
-	// 5. 获取分区信息
+	// 5. Get partition information
 	partitions := getPartitions()
 	if partitions == nil {
-		fmt.Println("❌ 获取分区信息失败，请检查网络连接")
+		fmt.Println("❌ Failed to get partition information. Please check your network connection.")
 		return
 	}
 
-	// 6. 显示分区信息
+	// 6. Display partition information
 	listPartitions(partitions)
 
-	fmt.Println("✅ 安装完成")
+	fmt.Println("✅ Installation complete")
 }
 
 func checkKubectlInstalled() bool {
@@ -215,28 +208,28 @@ func checkKubectlInstalled() bool {
 }
 
 func installKubectl() {
-	fmt.Println("正在安装kubectl...")
+	fmt.Println("Installing kubectl...")
 
 	var cmd *exec.Cmd
 
-	// TODO: Fix if update kubectl version
-	version := "v1.32.3"
+	// TODO: Update kubectl version as needed
+	kubectlVersion := "v1.32.3"
 
 	switch runtime.GOOS {
 	case "darwin": // macOS
 		if checkCommandExists("brew") {
 			cmd = exec.Command("brew", "install", "kubectl")
 		} else {
-			fmt.Println("请先安装Homebrew: https://brew.sh/")
+			fmt.Println("Please install Homebrew first: https://brew.sh/")
 			return
 		}
 
 	case "linux":
-		// 默认下载到/usr/local/bin，询问用户，如果反对，下载到~/.hpcgame/bin，并增加到PATH
-		fmt.Println("请问您要将kubectl安装到/usr/local/bin还是~/.hpcgame/bin？")
-		fmt.Println("1. /usr/local/bin【默认】")
+		// Ask user where to install kubectl
+		fmt.Println("Where would you like to install kubectl?")
+		fmt.Println("1. /usr/local/bin [Default]")
 		fmt.Println("2. ~/.hpcgame/bin")
-		fmt.Print("请输入选项 (1/2): ")
+		fmt.Print("Choose option (1/2): ")
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
 		option := scanner.Text()
@@ -244,108 +237,125 @@ func installKubectl() {
 		if option == "2" {
 			homeDir, err := os.UserHomeDir()
 			if err != nil {
-				fmt.Printf("获取用户主目录失败: %s\n", err)
+				fmt.Printf("Failed to get user home directory: %s\n", err)
 				return
 			}
 			installPath = filepath.Join(homeDir, kubeconfigDir, "bin")
 			err = os.MkdirAll(installPath, 0700)
 			if err != nil {
-				fmt.Printf("创建目录失败: %s\n", err)
+				fmt.Printf("Failed to create directory: %s\n", err)
 				return
 			}
-			fmt.Printf("请将%s添加到PATH中\n", installPath)
+			fmt.Printf("Please add %s to your PATH\n", installPath)
 		} else {
 			installPath = "/usr/local/bin"
 		}
 		cmd = exec.Command("bash", "-c",
-			"curl -LO https://dl.k8s.io/release/"+string(version)+"/bin/linux/amd64/kubectl && "+
+			"curl -LO https://dl.k8s.io/release/"+string(kubectlVersion)+"/bin/linux/amd64/kubectl && "+
 				"chmod +x kubectl && "+
 				"sudo mv kubectl "+installPath)
 		if option == "2" {
-			fmt.Printf("请将%s添加到PATH中，是否由本程序修改.bashrc与.zshrc？(Y/n): ", installPath)
+			fmt.Printf("Would you like to add %s to PATH by modifying .bashrc and .zshrc? (Y/n): ", installPath)
 			scanner.Scan()
 			addToPath := scanner.Text()
-			// modify PATH for this session to make it work
+			// Modify PATH for current session
 			os.Setenv("PATH", os.Getenv("PATH")+":"+installPath)
 			if addToPath != "Y" && addToPath != "y" && addToPath != "" {
-				fmt.Printf("请手动将%s添加到PATH中\n", installPath)
+				fmt.Printf("Please manually add %s to your PATH\n", installPath)
 			} else {
-				// add to .bash
+				// Add to .bashrc
 				bashrcPath := filepath.Join(os.Getenv("HOME"), ".bashrc")
 				zshrcPath := filepath.Join(os.Getenv("HOME"), ".zshrc")
 				if _, err := os.Stat(bashrcPath); err == nil {
-					// bash
 					f, err := os.OpenFile(bashrcPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 					if err != nil {
-						fmt.Printf("打开.bashrc失败: %s\n", err)
+						fmt.Printf("Failed to open .bashrc: %s\n", err)
 						return
 					}
 					defer f.Close()
 					if _, err := f.WriteString(fmt.Sprintf("\nexport PATH=$PATH:%s\n", installPath)); err != nil {
-						fmt.Printf("写入.bashrc失败: %s\n", err)
+						fmt.Printf("Failed to write to .bashrc: %s\n", err)
 						return
 					}
-					fmt.Printf("已将%s添加到.bashrc\n", installPath)
+					fmt.Printf("Added %s to .bashrc\n", installPath)
 				}
+				// Add to .zshrc if it exists
 				if _, err := os.Stat(zshrcPath); err == nil {
-					// zsh, if .zshrc exists
-					if _, err := os.Stat(zshrcPath); err == nil {
-						f, err := os.OpenFile(zshrcPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-						if err != nil {
-							fmt.Printf("打开.zshrc失败: %s\n", err)
-							return
-						}
-						defer f.Close()
-						if _, err := f.WriteString(fmt.Sprintf("\nexport PATH=$PATH:%s\n", installPath)); err != nil {
-							fmt.Printf("写入.zshrc失败: %s\n", err)
-							return
-						}
-						fmt.Printf("已将%s添加到.zshrc\n", installPath)
+					f, err := os.OpenFile(zshrcPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+					if err != nil {
+						fmt.Printf("Failed to open .zshrc: %s\n", err)
+						return
 					}
+					defer f.Close()
+					if _, err := f.WriteString(fmt.Sprintf("\nexport PATH=$PATH:%s\n", installPath)); err != nil {
+						fmt.Printf("Failed to write to .zshrc: %s\n", err)
+						return
+					}
+					fmt.Printf("Added %s to .zshrc\n", installPath)
 				}
 			}
 		}
 
 	case "windows":
-		// 下载kubectl，先尝试winget，然后下载并提示用户放进PATH
+		// For Windows, try winget first, then manual download
 		cmd = exec.Command("powershell", "-Command",
 			"if (Get-Command winget -ErrorAction SilentlyContinue) { "+
 				"winget install --id Kubernetes.kubectl -e } else { "+
-				"$url = \"https://dl.k8s.io/release/"+string(version)+"/bin/windows/amd64/kubectl.exe\"; "+
+				"$url = \"https://dl.k8s.io/release/"+string(kubectlVersion)+"/bin/windows/amd64/kubectl.exe\"; "+
 				"$output = 'kubectl.exe'; "+
 				"Invoke-WebRequest -Uri $url -OutFile $output; "+
-				"Write-Host '请将kubectl.exe移动到PATH中的目录，例如C:\\Windows\\System32'; "+
-				"Write-Host '或者手动安装kubectl。教程：https://kubernetes.io/docs/tasks/tools/install-kubectl-windows/'; }")
+				"Write-Host 'Please move kubectl.exe to a directory in your PATH, such as C:\\Windows\\System32'; "+
+				"Write-Host 'Or manually install kubectl from: https://kubernetes.io/docs/tasks/tools/install-kubectl-windows/'; }")
 
 	default:
-		fmt.Printf("不支持的操作系统: %s\n", runtime.GOOS)
+		fmt.Printf("Unsupported operating system: %s\n", runtime.GOOS)
 		return
 	}
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("安装kubectl失败: %s\n%s\n", err, string(output))
+		fmt.Printf("Failed to install kubectl: %s\n%s\n", err, string(output))
 		return
 	}
 
-	fmt.Println("✅ kubectl安装成功")
+	fmt.Println("✅ kubectl installed successfully")
 }
 
 func listPartitions(partitions []Partition) {
-	fmt.Println("可用分区:")
-	for cnt, partition := range partitions {
-		info := fmt.Sprintf("[%d]分区: %s \n\t简介: %s \n\tCPU限制: %d \n\t内存限制: %dGiB \n",
-			cnt, partition.Name, partition.Description, partition.CPULimit, partition.MemoryLimit)
+	fmt.Println("Available partitions:")
+	fmt.Println("------------------------------------------------")
+	for i, partition := range partitions {
+		info := fmt.Sprintf("[%d] Partition: %s\n\tDescription: %s\n\tCPU Limit: %d\n\tMemory Limit: %dGiB\n",
+			i, partition.Name, partition.Description, partition.CPULimit, partition.MemoryLimit)
 		if partition.GPUTag != "" {
-			info += fmt.Sprintf("\t可用GPU: %s \n", partition.GPUName)
+			info += fmt.Sprintf("\tAvailable GPU: %s\n", partition.GPUName)
 		}
-		info += "\t验证过的镜像列表（也可以使用自定义镜像）: "
-		for cmti, image := range partition.Images {
-			info += fmt.Sprintf("\n\t\t[%d] %s\n", cmti, image)
+		info += "\tVerified images (custom images also supported):"
+		for j, image := range partition.Images {
+			info += fmt.Sprintf("\n\t\t[%d] %s", j, image)
 		}
 		fmt.Println(info)
 		fmt.Println("------------------------------------------------")
 	}
+}
+
+func listImages() {
+	partitions := getPartitions()
+	if partitions == nil {
+		fmt.Println("❌ Failed to get partition information")
+		return
+	}
+
+	fmt.Println("Available images by partition:")
+	fmt.Println("------------------------------------------------")
+	for _, partition := range partitions {
+		fmt.Printf("Partition: %s\n", partition.Name)
+		for _, image := range partition.Images {
+			fmt.Printf("  %s\n", image)
+		}
+		fmt.Println("------------------------------------------------")
+	}
+	fmt.Println("Note: Custom images are also supported if compatible with the partition")
 }
 
 func shellContainer() {
@@ -355,20 +365,20 @@ func shellContainer() {
 	}
 
 	if len(os.Args) < 3 {
-		fmt.Println("请指定要连接的容器名称")
-		fmt.Println("用法: hpcgame shell <容器名称>")
+		fmt.Println("Please specify the container to connect to")
+		fmt.Println("Usage: hpcgame shell <container-name>")
 		return
 	}
 
 	containerName := os.Args[2]
-	fmt.Printf("正在连接到容器 %s...\n", containerName)
+	fmt.Printf("Connecting to container %s...\n", containerName)
 
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "exec", "-it", containerName, "--", "/bin/bash")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("连接到容器失败: %s\n", err)
+		fmt.Printf("Failed to connect to container: %s\n", err)
 		return
 	}
 }
@@ -379,24 +389,69 @@ func execInContainer() {
 		return
 	}
 
-	if len(os.Args) < 4 {
-		fmt.Println("请指定要执行的容器名称和命令")
-		fmt.Println("用法: hpcgame exec <容器名称> <命令>")
+	// Parse command line options for exec
+	interactive := false
+	tty := false
+	args := os.Args[2:]
+
+	// Parse flags for interactive and tty options
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-i" || args[i] == "--interactive" {
+			interactive = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		} else if args[i] == "-t" || args[i] == "--tty" {
+			tty = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		} else if args[i] == "-it" || args[i] == "-ti" {
+			interactive = true
+			tty = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		}
+	}
+
+	if len(args) < 1 {
+		fmt.Println("Container name required")
+		fmt.Println("Usage: hpcgame exec [OPTIONS] CONTAINER COMMAND [ARG...]")
+		fmt.Println("Options:")
+		fmt.Println("  -i, --interactive    Keep STDIN open even if not attached")
+		fmt.Println("  -t, --tty            Allocate a pseudo-TTY")
 		return
 	}
 
-	containerName := os.Args[2]
-	command := os.Args[3:]
+	containerName := args[0]
+	cmdArgs := args[1:]
 
-	fmt.Printf("在容器 %s 中执行命令: %s\n", containerName, strings.Join(command, " "))
+	// Default to bash shell if no command specified
+	if len(cmdArgs) == 0 {
+		cmdArgs = []string{"/bin/bash"}
+	}
 
-	kubectlArgs := append([]string{"--kubeconfig", kubeconfigPath, "exec", containerName, "--"}, command...)
+	fmt.Printf("Executing in container %s: %s\n", containerName, strings.Join(cmdArgs, " "))
+
+	// Build kubectl command
+	kubectlArgs := []string{"--kubeconfig", kubeconfigPath, "exec"}
+	if interactive && tty {
+		kubectlArgs = append(kubectlArgs, "-it")
+	} else {
+		if interactive {
+			kubectlArgs = append(kubectlArgs, "-i")
+		}
+		if tty {
+			kubectlArgs = append(kubectlArgs, "-t")
+		}
+	}
+	kubectlArgs = append(kubectlArgs, containerName, "--")
+	kubectlArgs = append(kubectlArgs, cmdArgs...)
+
 	cmd := exec.Command("kubectl", kubectlArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("执行命令失败: %s\n", err)
+		fmt.Printf("Failed to execute command: %s\n", err)
 		return
 	}
 }
@@ -408,41 +463,42 @@ func copyFiles() {
 	}
 
 	if len(os.Args) < 4 {
-		fmt.Println("请指定源文件和目标文件")
-		fmt.Println("用法: hpcgame cp <源文件> <目标文件>")
-		fmt.Println("例如: hpcgame cp ./local-file.txt my-container:/path/to/file.txt")
-		fmt.Println("      hpcgame cp my-container:/path/to/file.txt ./local-file.txt")
+		fmt.Println("Source and destination required")
+		fmt.Println("Usage: hpcgame cp SOURCE DEST")
+		fmt.Println("Examples:")
+		fmt.Println("  hpcgame cp ./local-file.txt container:/path/to/file.txt")
+		fmt.Println("  hpcgame cp container:/path/to/file.txt ./local-copy.txt")
 		return
 	}
 
 	source := os.Args[2]
 	destination := os.Args[3]
 
-	// 处理目标为容器但没有指定路径的情况
+	// Handle containers with missing paths
 	if strings.Contains(destination, ":") && strings.HasSuffix(destination, ":") {
 		containerName := strings.TrimSuffix(destination, ":")
 		destination = containerName + ":~/"
-		fmt.Printf("⚠️ 未指定目标路径，将复制到容器 %s 的用户主目录\n", containerName)
+		fmt.Printf("⚠️ No destination path specified, copying to home directory of container %s\n", containerName)
 	}
 
-	// 处理源为容器但没有指定路径的情况
+	// Check for invalid source path
 	if strings.Contains(source, ":") && strings.HasSuffix(source, ":") {
-		fmt.Println("❌ 错误: 源文件路径不能为空")
-		fmt.Println("用法: hpcgame cp <源文件> <目标文件>")
+		fmt.Println("❌ Error: Source file path cannot be empty")
+		fmt.Println("Usage: hpcgame cp SOURCE DEST")
 		return
 	}
 
-	fmt.Printf("复制文件: %s -> %s\n", source, destination)
+	fmt.Printf("Copying: %s -> %s\n", source, destination)
 
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "cp", source, destination)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("复制文件失败: %s\n", err)
+		fmt.Printf("Failed to copy files: %s\n", err)
 		return
 	}
 
-	fmt.Println("✅ 文件复制成功")
+	fmt.Println("✅ File copied successfully")
 }
 
 func portForward() {
@@ -451,124 +507,130 @@ func portForward() {
 		return
 	}
 
-	if len(os.Args) < 4 {
-		fmt.Println("请指定容器名称和端口映射")
-		fmt.Println("用法: hpcgame portforward <容器名称> <本地端口>:<容器端口>")
-		fmt.Println("例如: hpcgame portforward my-container 8080:80")
+	if len(os.Args) < 3 {
+		fmt.Println("Container name and port mapping required")
+		fmt.Println("Usage: hpcgame port CONTAINER LOCAL_PORT:CONTAINER_PORT")
+		fmt.Println("Example: hpcgame port my-container 8080:80")
 		return
 	}
 
 	containerName := os.Args[2]
-	portMapping := os.Args[3]
+	var portMapping string
 
-	fmt.Printf("设置端口转发: %s %s\n", containerName, portMapping)
-	fmt.Println("按 Ctrl+C 停止端口转发")
+	if len(os.Args) > 3 {
+		portMapping = os.Args[3]
+	} else {
+		// Check if container name contains port mapping
+		parts := strings.Split(containerName, " ")
+		if len(parts) > 1 {
+			containerName = parts[0]
+			portMapping = parts[1]
+		} else {
+			fmt.Println("Port mapping required")
+			fmt.Println("Usage: hpcgame port CONTAINER LOCAL_PORT:CONTAINER_PORT")
+			return
+		}
+	}
+
+	fmt.Printf("Setting up port forwarding: %s %s\n", containerName, portMapping)
+	fmt.Println("Press Ctrl+C to stop forwarding")
 
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "port-forward", "pod/"+containerName, portMapping)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("设置端口转发失败: %s\n", err)
+		fmt.Printf("Failed to set up port forwarding: %s\n", err)
 		return
 	}
 }
 
-// cached partitions. Update once a day on need
 func getPartitions() []Partition {
-	// get last update time from ~/.hpcgame/partition_last_update
+	// Get the user's home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Printf("获取用户主目录失败: %s\n", err)
+		fmt.Printf("Failed to get user home directory: %s\n", err)
 		return nil
 	}
 
-	// create ~/.hpcgame directory if not exists
-	kubeconfigDir := filepath.Join(homeDir, kubeconfigDir)
-	if _, err := os.Stat(kubeconfigDir); os.IsNotExist(err) {
-		err := os.MkdirAll(kubeconfigDir, 0700)
+	// Create ~/.hpcgame directory if it doesn't exist
+	hpcgameDir := filepath.Join(homeDir, kubeconfigDir)
+	if _, err := os.Stat(hpcgameDir); os.IsNotExist(err) {
+		err := os.MkdirAll(hpcgameDir, 0700)
 		if err != nil {
-			fmt.Printf("创建目录失败: %s\n", err)
+			fmt.Printf("Failed to create directory: %s\n", err)
 			return nil
 		}
-		fmt.Printf("创建hpcgame目录: %s\n", kubeconfigDir)
+		fmt.Printf("Created HPCGame directory: %s\n", hpcgameDir)
 	}
 
-	partitionFile := filepath.Join(kubeconfigDir, "partitions.json")
-	lastUpdateFile := filepath.Join(kubeconfigDir, "partition_last_update")
+	partitionFile := filepath.Join(hpcgameDir, "partitions.json")
+	lastUpdateFile := filepath.Join(hpcgameDir, "partition_last_update")
 	if _, err := os.Stat(lastUpdateFile); os.IsNotExist(err) {
-		// create file
+		// Create last update file
 		os.WriteFile(lastUpdateFile, []byte("0"), 0644)
 	}
-	// read file
-	is_outdated := true
+
+	// Check if partitions need to be updated
+	needsUpdate := true
 	lastUpdateTime := 0
 	lastUpdate, err := os.ReadFile(lastUpdateFile)
-	if err != nil {
-		is_outdated = true
-	} else {
+	if err == nil {
 		lastUpdateTime, err = strconv.Atoi(string(lastUpdate))
-		if err != nil {
-			fmt.Printf("解析时间失败: %s\n", err)
-			return nil
+		if err == nil && lastUpdateTime+86400 > int(time.Now().Unix()) {
+			needsUpdate = false
 		}
 	}
-	// check if last update time is older than 24 hours
-	if is_outdated || lastUpdateTime+86400 < int(time.Now().Unix()) {
-		// update partitions from https://hpcgame.pku.edu.cn/oss/images/public/partitions.json
+
+	if needsUpdate {
+		// Update partitions from the server
 		resp, err := http.Get("https://hpcgame.pku.edu.cn/oss/images/public/partitions.json")
 		if err != nil {
-			fmt.Printf("获取分区信息失败: %s\n", err)
+			fmt.Printf("Failed to get partition information: %s\n", err)
 			return nil
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			fmt.Printf("获取分区信息失败: %s\n", resp.Status)
+			fmt.Printf("Failed to get partition information: %s\n", resp.Status)
 			return nil
 		}
 
-		// read json, save to ~/.hpcgame/partitions.json, update last update time
+		// Save the updated partition information
 		out, err := os.Create(partitionFile)
 		if err != nil {
-			fmt.Printf("创建文件失败: %s\n", err)
+			fmt.Printf("Failed to create file: %s\n", err)
 			return nil
 		}
 		defer out.Close()
 		_, err = io.Copy(out, resp.Body)
 		if err != nil {
-			fmt.Printf("保存分区信息失败: %s\n", err)
+			fmt.Printf("Failed to save partition information: %s\n", err)
 			return nil
 		}
-		// update last update time
+
+		// Update last update timestamp
 		err = os.WriteFile(lastUpdateFile, []byte(strconv.Itoa(int(time.Now().Unix()))), 0644)
 		if err != nil {
-			fmt.Printf("更新分区信息失败: %s\n", err)
+			fmt.Printf("Failed to update partition timestamp: %s\n", err)
 			return nil
 		}
 
-		fmt.Printf("分区信息已更新: %s\n", partitionFile)
+		fmt.Printf("Partition information updated: %s\n", partitionFile)
 	}
 
-	// read partitions from ~/.hpcgame/partitions.json
+	// Read partitions from file
 	data, err := os.ReadFile(partitionFile)
 	if err != nil {
-		fmt.Printf("读取分区信息失败: %s\n", err)
+		fmt.Printf("Failed to read partition information: %s\n", err)
 		return nil
 	}
+
 	var partitions []Partition
 	err = json.Unmarshal(data, &partitions)
 	if err != nil {
-		fmt.Printf("解析分区信息失败: %s\n", err)
+		fmt.Printf("Failed to parse partition information: %s\n", err)
 		return nil
 	}
-	// print partitions if DEBUG is set
-	if os.Getenv("DEBUG") != "" {
-		fmt.Printf("分区信息: %s\n", string(data))
-		// print partitions
-		fmt.Println("可用分区:")
-		for _, partition := range partitions {
-			fmt.Printf("分区: %s, GPU标签: %s, 镜像: %s\n", partition.Name, partition.GPUTag, strings.Join(partition.Images, ", "))
-		}
-	}
+
 	return partitions
 }
 
@@ -578,7 +640,8 @@ func checkCommandExists(cmd string) bool {
 }
 
 func getKubeconfigFromUser() string {
-	fmt.Println("请输入您的kubeconfig内容，可以前往 https://hpcgame.pku.edu.cn/kube/_/ui/#/tokens/ 获取。输入完成后按Ctrl+D（linux、macOS）或Ctrl+Z（windows）结束:")
+	fmt.Println("Please enter your kubeconfig content. You can get it from https://hpcgame.pku.edu.cn/kube/_/ui/#/tokens/")
+	fmt.Println("Press Ctrl+D (Linux/macOS) or Ctrl+Z (Windows) when finished:")
 
 	var kubeconfig strings.Builder
 	scanner := bufio.NewScanner(os.Stdin)
@@ -591,21 +654,21 @@ func getKubeconfigFromUser() string {
 }
 
 func validateKubeconfig(kubeconfig string) bool {
-	// 创建临时文件存储kubeconfig
+	// Create temporary file for kubeconfig
 	tmpFile, err := os.CreateTemp("", "kubeconfig-*")
 	if err != nil {
-		fmt.Printf("创建临时文件失败: %s\n", err)
+		fmt.Printf("Failed to create temporary file: %s\n", err)
 		return false
 	}
 	defer os.Remove(tmpFile.Name())
 
 	if _, err := tmpFile.WriteString(kubeconfig); err != nil {
-		fmt.Printf("写入临时文件失败: %s\n", err)
+		fmt.Printf("Failed to write to temporary file: %s\n", err)
 		return false
 	}
 	tmpFile.Close()
 
-	// 使用临时kubeconfig尝试列出节点
+	// Validate kubeconfig by trying to list nodes
 	cmd := exec.Command("kubectl", "--kubeconfig", tmpFile.Name(), "get", "nodes")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -613,65 +676,65 @@ func validateKubeconfig(kubeconfig string) bool {
 	err = cmd.Run()
 
 	if err != nil {
-		fmt.Printf("验证kubeconfig失败: %s\n%s\n", err, stderr.String())
+		fmt.Printf("Kubeconfig validation failed: %s\n%s\n", err, stderr.String())
 		return false
 	}
 
-	fmt.Println("✅ kubeconfig验证成功")
+	fmt.Println("✅ Kubeconfig validated successfully")
 	return true
 }
 
 func saveKubeconfig(kubeconfig string) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Printf("获取用户主目录失败: %s\n", err)
+		fmt.Printf("Failed to get user home directory: %s\n", err)
 		return
 	}
 
 	configDir := filepath.Join(homeDir, kubeconfigDir)
 	err = os.MkdirAll(configDir, 0700)
 	if err != nil {
-		fmt.Printf("创建配置目录失败: %s\n", err)
+		fmt.Printf("Failed to create config directory: %s\n", err)
 		return
 	}
 
 	kubeconfigPath := filepath.Join(configDir, kubeconfigFile)
 
-	// 检查文件是否存在
+	// Check if file already exists
 	if _, err := os.Stat(kubeconfigPath); err == nil {
-		fmt.Printf("kubeconfig文件已存在于 %s\n", kubeconfigPath)
-		fmt.Print("是否覆盖? (y/n): ")
+		fmt.Printf("Kubeconfig file already exists at %s\n", kubeconfigPath)
+		fmt.Print("Overwrite? (y/n): ")
 
 		reader := bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Printf("读取输入失败: %s\n", err)
+			fmt.Printf("Failed to read input: %s\n", err)
 			return
 		}
 
 		response = strings.TrimSpace(strings.ToLower(response))
 		if response != "y" && response != "yes" {
-			fmt.Println("操作已取消")
+			fmt.Println("Operation cancelled")
 			return
 		}
 	}
 
-	// 写入kubeconfig
+	// Write kubeconfig
 	err = os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600)
 	if err != nil {
-		fmt.Printf("保存kubeconfig失败: %s\n", err)
+		fmt.Printf("Failed to save kubeconfig: %s\n", err)
 		return
 	}
 
-	fmt.Printf("✅ kubeconfig已保存到 %s\n", kubeconfigPath)
+	fmt.Printf("✅ Kubeconfig saved to %s\n", kubeconfigPath)
 }
 
 func installVSCodeExtensions() {
-	// 检查code命令是否可用
+	// Check if the 'code' command is available
 	if _, err := exec.LookPath("code"); err != nil {
-		fmt.Println("⚠️ 未找到VSCode命令行工具 'code'")
-		fmt.Println("如果您已安装VSCode，请确保'code'命令已添加到PATH中")
-		fmt.Println("或者手动安装以下VSCode扩展:")
+		fmt.Println("⚠️ VSCode command-line tool 'code' not found")
+		fmt.Println("If you have VSCode installed, ensure the 'code' command is in your PATH")
+		fmt.Println("Or manually install these VSCode extensions:")
 		fmt.Println("- ms-kubernetes-tools.vscode-kubernetes-tools")
 		fmt.Println("- ms-vscode-remote.remote-containers")
 		return
@@ -682,7 +745,7 @@ func installVSCodeExtensions() {
 		"ms-vscode-remote.remote-containers",
 	}
 
-	fmt.Println("正在安装VSCode扩展...")
+	fmt.Println("Installing VSCode extensions...")
 
 	for _, ext := range extensions {
 		cmd := exec.Command("code", "--install-extension", ext)
@@ -692,9 +755,9 @@ func installVSCodeExtensions() {
 		err := cmd.Run()
 
 		if err != nil {
-			fmt.Printf("安装扩展 %s 失败: %s\n%s\n", ext, err, stderr.String())
+			fmt.Printf("Failed to install extension %s: %s\n%s\n", ext, err, stderr.String())
 		} else {
-			fmt.Printf("✅ 安装扩展 %s 成功\n", ext)
+			fmt.Printf("✅ Installed extension %s\n", ext)
 		}
 	}
 }
@@ -702,92 +765,114 @@ func installVSCodeExtensions() {
 func getKubeConfig() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Printf("获取用户主目录失败: %s\n", err)
+		fmt.Printf("Failed to get user home directory: %s\n", err)
 		return ""
 	}
 
 	kubeconfigPath := filepath.Join(homeDir, kubeconfigDir, kubeconfigFile)
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
-		fmt.Printf("kubeconfig不存在: %s\n请先运行 install 命令\n", kubeconfigPath)
+		fmt.Printf("Kubeconfig not found: %s\n", kubeconfigPath)
+		fmt.Println("Please run 'hpcgame install' first")
 		return ""
 	}
 
 	return kubeconfigPath
 }
 
-func createContainer() {
+func runContainer() {
 	kubeconfigPath := getKubeConfig()
 	if kubeconfigPath == "" {
 		return
 	}
 
-	// 创建一个新的标志集
-	createCmd := flag.NewFlagSet("create", flag.ExitOnError)
+	// Create new flag set for run command
+	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 
-	// 定义命令行选项
-	partitionFlag := createCmd.String("partition", "", "指定分区名称")
-	cpuFlag := createCmd.Int("cpu", 0, "指定CPU核心数")
-	memoryFlag := createCmd.Int("memory", 0, "指定内存大小，单位GiB")
-	gpuFlag := createCmd.Int("gpu", 0, "指定GPU数量")
-	imageFlag := createCmd.String("image", "", "指定容器镜像")
-	nameFlag := createCmd.String("name", "", "指定容器名称")
-	helpFlag := createCmd.Bool("help", false, "显示帮助信息")
-	volumesFlag := createCmd.String("volumes", "", "指定额外挂载的持久卷，多个卷用逗号分隔")
+	// Define command line options
+	partitionFlag := runCmd.String("partition", "", "Specify partition name")
+	cpuFlag := runCmd.Int("cpu", 1, "Specify CPU cores")
+	memoryFlag := runCmd.Int("memory", 0, "Specify memory size in GiB")
+	gpuFlag := runCmd.Int("gpu", 0, "Specify GPU count")
+	nameFlag := runCmd.String("name", "", "Specify container name")
+	volumeFlag := runCmd.String("volume", "", "Mount volumes (comma-separated)")
+	imageFlag := runCmd.String("image", "", "Specify container image")
+	helpFlag := runCmd.Bool("help", false, "Show help information")
 
-	// 支持短标志
-	createCmd.StringVar(partitionFlag, "p", "", "指定分区名称 (简写)")
-	createCmd.IntVar(cpuFlag, "c", 0, "指定CPU核心数 (简写)")
-	createCmd.IntVar(memoryFlag, "m", 0, "指定内存大小，单位GiB (简写)")
-	createCmd.IntVar(gpuFlag, "g", 0, "指定GPU数量 (简写)")
-	createCmd.StringVar(imageFlag, "i", "", "指定容器镜像 (简写)")
-	createCmd.StringVar(nameFlag, "n", "", "指定容器名称 (简写)")
-	createCmd.BoolVar(helpFlag, "h", false, "显示帮助信息 (简写)")
-	createCmd.StringVar(volumesFlag, "v", "", "指定额外挂载的持久卷，多个卷用逗号分隔 (简写)")
+	// Add short flags
+	runCmd.StringVar(partitionFlag, "p", "", "Specify partition name (short)")
+	runCmd.IntVar(cpuFlag, "c", 1, "Specify CPU cores (short)")
+	runCmd.IntVar(memoryFlag, "m", 0, "Specify memory size in GiB (short)")
+	runCmd.IntVar(gpuFlag, "g", 0, "Specify GPU count (short)")
+	runCmd.StringVar(nameFlag, "n", "", "Specify container name (short)")
+	runCmd.StringVar(volumeFlag, "v", "", "Mount volumes (short)")
+	runCmd.StringVar(imageFlag, "i", "", "Specify container image (short)")
+	runCmd.BoolVar(helpFlag, "h", false, "Show help information (short)")
 
-	// 解析命令行参数
+	// Parse arguments
 	if len(os.Args) < 3 {
-		createCmd.Usage()
+		fmt.Println("Usage: hpcgame run [OPTIONS] [IMAGE]")
+		runCmd.PrintDefaults()
+		return
 	}
 
-	err := createCmd.Parse(os.Args[2:])
+	// Find the position where options end and the image begins
+	imagePos := 0
+	for i := 2; i < len(os.Args); i++ {
+		if !strings.HasPrefix(os.Args[i], "-") {
+			imagePos = i
+			break
+		}
+	}
+
+	var flagArgs []string
+	var imageArg string
+
+	if imagePos > 0 {
+		flagArgs = os.Args[2:imagePos]
+		imageArg = os.Args[imagePos]
+	} else {
+		flagArgs = os.Args[2:]
+	}
+
+	err := runCmd.Parse(flagArgs)
 	if err != nil {
-		fmt.Printf("解析参数失败: %s\n", err)
+		fmt.Printf("Failed to parse arguments: %s\n", err)
 		return
 	}
 
-	// 显示帮助
+	// Show help
 	if *helpFlag {
-		fmt.Println("用法: hpcgame create [选项]")
-		fmt.Println("选项:")
-		createCmd.PrintDefaults()
+		fmt.Println("Usage: hpcgame run [OPTIONS] [IMAGE]")
+		fmt.Println("Options:")
+		runCmd.PrintDefaults()
 		return
 	}
 
-	// 获取分区信息
+	// Get partitions
 	partitions := getPartitions()
 	if partitions == nil {
-		fmt.Println("获取分区信息失败")
+		fmt.Println("Failed to get partition information")
 		return
 	}
 
-	// 处理分区
+	// Handle partition
 	partitionStruct := Partition{}
 	partition := *partitionFlag
 
-	// 如果没有提供分区，交互式询问
+	// If partition not provided, prompt interactively
 	if partition == "" {
 		listPartitions(partitions)
-		fmt.Print("请输入分区名称: ")
+		fmt.Print("Enter partition name: ")
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
 			partition = scanner.Text()
 		} else {
-			fmt.Println("读取输入失败")
+			fmt.Println("Failed to read input")
 			return
 		}
 	}
 
-	// 检查分区是否有效
+	// Validate partition
 	validPartition := false
 	for _, p := range partitions {
 		if p.Name == partition {
@@ -796,107 +881,134 @@ func createContainer() {
 			break
 		}
 	}
+
 	if !validPartition {
-		fmt.Printf("无效的分区名称: %s\n", partition)
+		fmt.Printf("Invalid partition name: %s\n", partition)
 		listPartitions(partitions)
 		return
 	}
 
-	// 处理CPU
+	// Handle CPU
 	cpu := *cpuFlag
-	if cpu == 0 {
-		fmt.Print("请输入CPU核心数: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			cpuValue := scanner.Text()
-			parsedCPU, err := strconv.Atoi(cpuValue)
-			if err != nil {
-				fmt.Printf("无效的CPU值: %s\n", cpuValue)
-				return
-			}
-			cpu = parsedCPU
-		} else {
-			fmt.Println("读取输入失败")
-			return
-		}
-	}
-
-	// 检查CPU值是否有效
 	if cpu <= 0 || cpu > partitionStruct.CPULimit {
-		fmt.Printf("无效的CPU值: %d, 分区限制: %d\n", cpu, partitionStruct.CPULimit)
+		fmt.Printf("Invalid CPU value: %d, partition limit: %d\n", cpu, partitionStruct.CPULimit)
 		return
 	}
 
-	// 处理内存
+	// Handle memory
 	memory := *memoryFlag
 	if memory == 0 {
-		// 设置默认值
+		// Default memory is CPU × 2
 		memory = cpu * 2
-		fmt.Printf("未指定内存，使用默认值: %dGiB\n", memory)
+		fmt.Printf("Memory not specified, using default: %dGiB\n", memory)
 	}
 
-	// 检查内存值是否有效
 	if memory <= 0 || memory > partitionStruct.MemoryLimit {
-		fmt.Printf("无效的内存值: %dGi, 分区限制: %dGi\n", memory, partitionStruct.MemoryLimit)
+		fmt.Printf("Invalid memory value: %dGiB, partition limit: %dGiB\n", memory, partitionStruct.MemoryLimit)
 		return
 	}
 
-	// 处理GPU
+	// Handle GPU
 	gpu := *gpuFlag
 
-	// 处理镜像
+	// Handle image - give priority to --image flag over positional argument
 	image := *imageFlag
+	if image == "" {
+		image = imageArg
+	}
+
 	if image == "" {
 		if len(partitionStruct.Images) > 0 {
 			image = partitionStruct.Images[0]
-			fmt.Printf("未指定镜像，使用默认值: %s\n", image)
+			fmt.Printf("Image not specified, using default: %s\n", image)
 		} else {
-			fmt.Println("分区没有可用镜像，请手动指定镜像")
-			fmt.Print("请输入镜像名称: ")
+			fmt.Println("Partition has no default images, please specify an image")
+			fmt.Print("Enter image name: ")
 			scanner := bufio.NewScanner(os.Stdin)
 			if scanner.Scan() {
 				image = scanner.Text()
 			} else {
-				fmt.Println("读取输入失败")
+				fmt.Println("Failed to read input")
 				return
 			}
 		}
 	}
 
+	// Handle volumes
 	var extraVolumes []string
-	if *volumesFlag != "" {
-		extraVolumes = strings.Split(*volumesFlag, ",")
-		// 去除空白
+	if *volumeFlag != "" {
+		extraVolumes = strings.Split(*volumeFlag, ",")
+		// Trim whitespace
 		for i, vol := range extraVolumes {
 			extraVolumes[i] = strings.TrimSpace(vol)
 		}
 
-		// 检查指定的持久卷是否存在
+		// Check if volumes exist
 		for _, vol := range extraVolumes {
 			cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pvc", vol)
 			err := cmd.Run()
 			if err != nil {
-				fmt.Printf("警告: 持久卷 %s 可能不存在，请检查名称或使用 'hpcgame volume ls' 查看可用持久卷\n", vol)
-				// 询问是否继续
-				// ...
+				fmt.Printf("Warning: Volume %s may not exist. Use 'hpcgame volume ls' to list available volumes\n", vol)
+				fmt.Print("Continue anyway? (y/n): ")
+				scanner := bufio.NewScanner(os.Stdin)
+				if scanner.Scan() {
+					response := strings.ToLower(scanner.Text())
+					if response != "y" && response != "yes" {
+						fmt.Println("Operation cancelled")
+						return
+					}
+				}
 			}
 		}
 	}
 
-	// 处理容器名称
+	// Handle container name
 	name := *nameFlag
 	if name == "" {
 		name = fmt.Sprintf("container-%d", os.Getpid())
 	}
 
-	// 创建容器
-	fmt.Printf("正在创建容器 %s...\n", name)
+	// Create container
+	fmt.Printf("Creating container %s...\n", name)
 	createErr := deployContainer(kubeconfigPath, partitionStruct, name, cpu, memory, gpu, image, extraVolumes)
 	if createErr != nil {
-		fmt.Printf("创建容器失败: %s\n", createErr)
+		fmt.Printf("Failed to create container: %s\n", createErr)
 		return
 	}
 
+	// Wait for container to start
+	fmt.Print("Waiting for container to start...")
+	for i := 0; i < 10; i++ {
+		fmt.Print(".")
+		cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pod", name, "-o", "jsonpath={.status.phase}")
+		output, err := cmd.Output()
+		if err == nil && string(output) == "Running" {
+			fmt.Println("\n✅ Container is running!")
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Println()
+
+	// Print information about the container
+	fmt.Printf("Container %s is ready\n", name)
+	fmt.Printf("Partition: %s, CPUs: %d, Memory: %dGiB", partition, cpu, memory)
+	if gpu > 0 {
+		fmt.Printf(", GPUs: %d", gpu)
+	}
+	fmt.Println()
+
+	// Show how to access the container using both original and docker-style commands
+	fmt.Println("\nYou can access the container with:")
+	fmt.Printf("  hpcgame shell %s           (original command)\n", name)
+	fmt.Printf("  hpcgame exec -it %s bash   (docker-style command)\n", name)
+
+	// Print volume mount information
+	fmt.Println("\nVolume mounts:")
+	fmt.Printf("  - Partition default volume mounted at /partition-data (default working directory)\n")
+	for _, vol := range extraVolumes {
+		fmt.Printf("  - Volume '%s' mounted at /mnt/%s\n", vol, vol)
+	}
 }
 
 func deployContainer(kubeconfigPath string, partition Partition, name string, cpu int, memory int, gpu int, image string, extraVolumes []string) error {
@@ -908,8 +1020,8 @@ func deployContainer(kubeconfigPath string, partition Partition, name string, cp
 	partitionName := partition.Name
 	err := ensurePartitionDefaultVolume(kubeconfigPath, partitionName)
 	if err != nil {
-		fmt.Printf("警告：无法创建默认持久卷：%s\n", err)
-		// 不终止容器创建过程，继续但不挂载持久卷
+		fmt.Printf("Warning: Unable to create default volume: %s\n", err)
+		// Continue without mounting default volume
 	}
 
 	partitionDash := strings.ReplaceAll(partitionName, "_", "-")
@@ -931,7 +1043,7 @@ func deployContainer(kubeconfigPath string, partition Partition, name string, cp
 		volumesStr += fmt.Sprintf("  - name: %s\n    persistentVolumeClaim:\n      claimName: %s\n", mountName, volumeName)
 	}
 
-	// 生成YAML配置
+	// Generate YAML config
 	yamlConfig := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
@@ -961,35 +1073,32 @@ spec:
   restartPolicy: Never
 `, name, partition.Name, image, cpu*1000, memory, gpulimit, cpu*1000, memory, gpulimit, volumeMountsStr, volumesStr)
 
-	// if debug mode, print yamlConfig
+	// Print YAML config in debug mode
 	if os.Getenv("DEBUG") != "" {
-		fmt.Printf("生成的YAML配置:\n%s\n", yamlConfig)
+		fmt.Printf("Generated YAML config:\n%s\n", yamlConfig)
 	}
 
-	// 创建临时文件
+	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "pod-*.yaml")
 	if err != nil {
-		return fmt.Errorf("创建临时文件失败: %s", err)
+		return fmt.Errorf("failed to create temporary file: %s", err)
 	}
 	defer os.Remove(tmpFile.Name())
 
 	if _, err := tmpFile.WriteString(yamlConfig); err != nil {
-		return fmt.Errorf("写入临时文件失败: %s", err)
+		return fmt.Errorf("failed to write to temporary file: %s", err)
 	}
 	tmpFile.Close()
 
-	// 应用配置
+	// Apply config
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", tmpFile.Name())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 
 	if err != nil {
-		return fmt.Errorf("部署容器失败: %s\n%s", err, stderr.String())
+		return fmt.Errorf("failed to deploy container: %s\n%s", err, stderr.String())
 	}
-
-	fmt.Printf("✅ 容器 %s 创建请求已发起\n", name)
-	fmt.Printf("  - 分区默认持久卷 (%s) 已挂载到 /partition-data (默认工作目录)\n", defaultVolumeName)
 
 	return nil
 }
@@ -1000,25 +1109,25 @@ func listContainers() {
 		return
 	}
 
-	fmt.Println("正在获取容器列表...")
+	fmt.Println("Retrieving container list...")
 
-	// 获取当前命名空间
+	// Get current namespace
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "config", "view", "--minify", "-o", "jsonpath={..namespace}")
-	var namespaceOutput bytes.Buffer
-	cmd.Stdout = &namespaceOutput
-	err := cmd.Run()
+	namespaceOutput, err := cmd.Output()
 
-	namespace := namespaceOutput.String()
+	namespace := string(namespaceOutput)
 	if err != nil || namespace == "" {
 		namespace = "default"
 	}
 
-	// 列出当前命名空间中的所有Pod
-	cmd = exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pods", "-n", namespace, "-o", "wide")
+	// Format output to be more Docker-like
+	cmd = exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pods", "-n", namespace,
+		"-o", "custom-columns=CONTAINER:.metadata.name,IMAGE:.spec.containers[0].image,STATUS:.status.phase,CREATED:.metadata.creationTimestamp,NODE:.spec.nodeName")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("获取容器列表失败: %s\n", err)
+		fmt.Printf("Failed to get container list: %s\n", err)
 		return
 	}
 }
@@ -1030,49 +1139,49 @@ func deleteContainer() {
 	}
 
 	if len(os.Args) < 3 {
-		fmt.Println("请指定要删除的容器名称")
-		fmt.Println("用法: hpcgame delete <容器名称>")
+		fmt.Println("Container name required")
+		fmt.Println("Usage: hpcgame rm CONTAINER")
 		return
 	}
 
 	containerName := os.Args[2]
-	fmt.Printf("正在删除容器 %s，请等待...\n", containerName)
+	fmt.Printf("Removing container %s...\n", containerName)
 
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "delete", "pod", containerName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("删除容器失败: %s\n", err)
+		fmt.Printf("Failed to remove container: %s\n", err)
 		return
 	}
 
-	fmt.Printf("✅ 容器 %s 已删除\n", containerName)
+	fmt.Printf("✅ Container %s removed\n", containerName)
 }
 
 func ensurePartitionDefaultVolume(kubeconfigPath string, partition string) error {
-	// 转换分区名称：将下划线替换为连字符
+	// Convert partition name: replace underscores with hyphens
 	partitionDash := strings.ReplaceAll(partition, "_", "-")
 
-	// 构造默认持久卷的名称
+	// Construct default volume name
 	defaultVolumeName := fmt.Sprintf("%s-default-pvc", partitionDash)
 
-	// 检查是否已存在
+	// Check if volume already exists
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pvc", defaultVolumeName)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 
-	// 如果持久卷已存在，直接返回
+	// If volume exists, return
 	if err == nil {
-		fmt.Printf("默认持久卷 %s 已存在\n", defaultVolumeName)
+		fmt.Printf("Default volume %s already exists\n", defaultVolumeName)
 		return nil
 	}
 
-	// 构造Storage Class名称
+	// Construct storage class name
 	storageClassName := fmt.Sprintf("%s-default-sc", partitionDash)
 
-	// 创建默认持久卷 (200Gi, ReadWriteMany)
+	// Create default volume (200Gi, ReadWriteMany)
 	pvcYAML := fmt.Sprintf(`apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -1086,29 +1195,29 @@ spec:
       storage: 200Gi
 `, defaultVolumeName, storageClassName)
 
-	// 创建临时文件
+	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "pvc-*.yaml")
 	if err != nil {
-		return fmt.Errorf("创建临时文件失败: %s", err)
+		return fmt.Errorf("failed to create temporary file: %s", err)
 	}
 	defer os.Remove(tmpFile.Name())
 
 	if _, err := tmpFile.WriteString(pvcYAML); err != nil {
-		return fmt.Errorf("写入临时文件失败: %s", err)
+		return fmt.Errorf("failed to write to temporary file: %s", err)
 	}
 	tmpFile.Close()
 
-	// 应用持久卷配置
+	// Apply volume config
 	cmd = exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", tmpFile.Name())
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 
 	if err != nil {
-		return fmt.Errorf("创建默认持久卷失败: %s\n%s", err, stderr.String())
+		return fmt.Errorf("failed to create default volume: %s\n%s", err, stderr.String())
 	}
 
-	fmt.Printf("✅ 默认持久卷 %s 创建成功\n", defaultVolumeName)
+	fmt.Printf("✅ Default volume %s created\n", defaultVolumeName)
 	return nil
 }
 
@@ -1116,7 +1225,7 @@ func listVolumes(kubeconfigPath string) error {
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pvc", "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("获取持久卷列表失败: %s", err)
+		return fmt.Errorf("failed to get volume list: %s", err)
 	}
 
 	var pvcList struct {
@@ -1141,12 +1250,12 @@ func listVolumes(kubeconfigPath string) error {
 
 	err = json.Unmarshal(output, &pvcList)
 	if err != nil {
-		return fmt.Errorf("解析持久卷列表失败: %s", err)
+		return fmt.Errorf("failed to parse volume list: %s", err)
 	}
 
-	fmt.Println("持久卷列表:")
+	fmt.Println("VOLUME LIST")
 	fmt.Println("===============================================================================")
-	fmt.Printf("%-25s %-15s %-20s %-15s %-10s %s\n", "名称", "大小", "存储类", "访问模式", "状态", "备注")
+	fmt.Printf("%-25s %-15s %-20s %-15s %-10s %s\n", "NAME", "SIZE", "STORAGE CLASS", "ACCESS MODE", "STATUS", "NOTES")
 	fmt.Println("-------------------------------------------------------------------------------")
 
 	for _, pvc := range pvcList.Items {
@@ -1154,7 +1263,7 @@ func listVolumes(kubeconfigPath string) error {
 		accessModes := strings.Join(pvc.Spec.AccessModes, ",")
 		notes := ""
 		if isDefault {
-			notes = "默认持久卷 (不可删除)"
+			notes = "Default volume (cannot be removed)"
 		}
 
 		fmt.Printf("%-25s %-15s %-20s %-15s %-10s %s\n",
@@ -1169,14 +1278,214 @@ func listVolumes(kubeconfigPath string) error {
 	return nil
 }
 
-// 创建持久卷
-func createVolume(kubeconfigPath string, name string, size string, storageClass string, accessMode string) error {
-	// 检查是否为默认持久卷
-	if strings.Contains(name, "-default-pvc") {
-		return fmt.Errorf("不能创建名称包含'-default-pvc'的持久卷，这是保留的命名格式")
+func createContainer() {
+	kubeconfigPath := getKubeConfig()
+	if kubeconfigPath == "" {
+		return
 	}
 
-	// 创建持久卷YAML (底层仍使用PVC)
+	// Create new flag set for create command
+	createCmd := flag.NewFlagSet("create", flag.ExitOnError)
+
+	// Define command line options
+	partitionFlag := createCmd.String("partition", "", "Specify partition name")
+	cpuFlag := createCmd.Int("cpu", 0, "Specify CPU cores")
+	memoryFlag := createCmd.Int("memory", 0, "Specify memory size in GiB")
+	gpuFlag := createCmd.Int("gpu", 0, "Specify GPU count")
+	imageFlag := createCmd.String("image", "", "Specify container image")
+	nameFlag := createCmd.String("name", "", "Specify container name")
+	volumesFlag := createCmd.String("volumes", "", "Specify additional volumes to mount (comma-separated)")
+	helpFlag := createCmd.Bool("help", false, "Show help information")
+
+	// Add short flags
+	createCmd.StringVar(partitionFlag, "p", "", "Specify partition name (short)")
+	createCmd.IntVar(cpuFlag, "c", 0, "Specify CPU cores (short)")
+	createCmd.IntVar(memoryFlag, "m", 0, "Specify memory size in GiB (short)")
+	createCmd.IntVar(gpuFlag, "g", 0, "Specify GPU count (short)")
+	createCmd.StringVar(imageFlag, "i", "", "Specify container image (short)")
+	createCmd.StringVar(nameFlag, "n", "", "Specify container name (short)")
+	createCmd.StringVar(volumesFlag, "v", "", "Specify additional volumes (short)")
+	createCmd.BoolVar(helpFlag, "h", false, "Show help information (short)")
+
+	// Parse arguments
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: hpcgame create [OPTIONS]")
+		createCmd.PrintDefaults()
+		return
+	}
+
+	err := createCmd.Parse(os.Args[2:])
+	if err != nil {
+		fmt.Printf("Failed to parse arguments: %s\n", err)
+		return
+	}
+
+	// Show help
+	if *helpFlag {
+		fmt.Println("Usage: hpcgame create [OPTIONS]")
+		fmt.Println("Options:")
+		createCmd.PrintDefaults()
+		return
+	}
+
+	// Get partitions
+	partitions := getPartitions()
+	if partitions == nil {
+		fmt.Println("Failed to get partition information")
+		return
+	}
+
+	// Handle partition
+	partitionStruct := Partition{}
+	partition := *partitionFlag
+
+	// If partition not provided, prompt interactively
+	if partition == "" {
+		listPartitions(partitions)
+		fmt.Print("Enter partition name: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			partition = scanner.Text()
+		} else {
+			fmt.Println("Failed to read input")
+			return
+		}
+	}
+
+	// Validate partition
+	validPartition := false
+	for _, p := range partitions {
+		if p.Name == partition {
+			validPartition = true
+			partitionStruct = p
+			break
+		}
+	}
+
+	if !validPartition {
+		fmt.Printf("Invalid partition name: %s\n", partition)
+		listPartitions(partitions)
+		return
+	}
+
+	// Handle CPU
+	cpu := *cpuFlag
+	if cpu == 0 {
+		fmt.Print("Enter CPU cores: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			cpuValue := scanner.Text()
+			parsedCPU, err := strconv.Atoi(cpuValue)
+			if err != nil {
+				fmt.Printf("Invalid CPU value: %s\n", cpuValue)
+				return
+			}
+			cpu = parsedCPU
+		} else {
+			fmt.Println("Failed to read input")
+			return
+		}
+	}
+
+	if cpu <= 0 || cpu > partitionStruct.CPULimit {
+		fmt.Printf("Invalid CPU value: %d, partition limit: %d\n", cpu, partitionStruct.CPULimit)
+		return
+	}
+
+	// Handle memory
+	memory := *memoryFlag
+	if memory == 0 {
+		// Default memory is CPU × 2
+		memory = cpu * 2
+		fmt.Printf("Memory not specified, using default: %dGiB\n", memory)
+	}
+
+	if memory <= 0 || memory > partitionStruct.MemoryLimit {
+		fmt.Printf("Invalid memory value: %dGiB, partition limit: %dGiB\n", memory, partitionStruct.MemoryLimit)
+		return
+	}
+
+	// Handle GPU
+	gpu := *gpuFlag
+
+	// Handle image
+	image := *imageFlag
+	if image == "" {
+		if len(partitionStruct.Images) > 0 {
+			image = partitionStruct.Images[0]
+			fmt.Printf("Image not specified, using default: %s\n", image)
+		} else {
+			fmt.Println("Partition has no default images, please specify an image")
+			fmt.Print("Enter image name: ")
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				image = scanner.Text()
+			} else {
+				fmt.Println("Failed to read input")
+				return
+			}
+		}
+	}
+
+	// Handle volumes
+	var extraVolumes []string
+	if *volumesFlag != "" {
+		extraVolumes = strings.Split(*volumesFlag, ",")
+		// Trim whitespace
+		for i, vol := range extraVolumes {
+			extraVolumes[i] = strings.TrimSpace(vol)
+		}
+
+		// Check if volumes exist
+		for _, vol := range extraVolumes {
+			cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "get", "pvc", vol)
+			err := cmd.Run()
+			if err != nil {
+				fmt.Printf("Warning: Volume %s may not exist. Use 'hpcgame volume ls' to list available volumes\n", vol)
+				fmt.Print("Continue anyway? (y/n): ")
+				scanner := bufio.NewScanner(os.Stdin)
+				if scanner.Scan() {
+					response := strings.ToLower(scanner.Text())
+					if response != "y" && response != "yes" {
+						fmt.Println("Operation cancelled")
+						return
+					}
+				}
+			}
+		}
+	}
+
+	// Handle container name
+	name := *nameFlag
+	if name == "" {
+		name = fmt.Sprintf("container-%d", os.Getpid())
+	}
+
+	// Create container
+	fmt.Printf("Creating container %s...\n", name)
+	createErr := deployContainer(kubeconfigPath, partitionStruct, name, cpu, memory, gpu, image, extraVolumes)
+	if createErr != nil {
+		fmt.Printf("Failed to create container: %s\n", createErr)
+		return
+	}
+
+	fmt.Printf("✅ Container %s creation request submitted\n", name)
+	fmt.Printf("  - Default partition volume mounted to /partition-data (default working directory)\n")
+	for _, vol := range extraVolumes {
+		fmt.Printf("  - Volume '%s' mounted to /mnt/%s\n", vol, vol)
+	}
+
+	fmt.Println("\nYou can connect to the container once it's running with:")
+	fmt.Printf("  hpcgame shell %s\n", name)
+}
+
+func createVolume(kubeconfigPath string, name string, size string, storageClass string, accessMode string) error {
+	// Check if this is a default volume
+	if strings.Contains(name, "-default-pvc") {
+		return fmt.Errorf("cannot create volume with name containing '-default-pvc', this is a reserved format")
+	}
+
+	// Create volume YAML
 	pvcYAML := fmt.Sprintf(`apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -1190,54 +1499,52 @@ spec:
       storage: %s
 `, name, storageClass, accessMode, size)
 
-	// 创建临时文件
+	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "pvc-*.yaml")
 	if err != nil {
-		return fmt.Errorf("创建临时文件失败: %s", err)
+		return fmt.Errorf("failed to create temporary file: %s", err)
 	}
 	defer os.Remove(tmpFile.Name())
 
 	if _, err := tmpFile.WriteString(pvcYAML); err != nil {
-		return fmt.Errorf("写入临时文件失败: %s", err)
+		return fmt.Errorf("failed to write to temporary file: %s", err)
 	}
 	tmpFile.Close()
 
-	// 应用持久卷配置
+	// Apply volume config
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", tmpFile.Name())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 
 	if err != nil {
-		return fmt.Errorf("创建持久卷失败: %s\n%s", err, stderr.String())
+		return fmt.Errorf("failed to create volume: %s\n%s", err, stderr.String())
 	}
 
-	fmt.Printf("✅ 持久卷 %s 创建成功\n", name)
+	fmt.Printf("✅ Volume %s created\n", name)
 	return nil
 }
 
-// 删除持久卷
 func deleteVolume(kubeconfigPath string, name string) error {
-	// 检查是否为默认持久卷
+	// Check if this is a default volume
 	if strings.Contains(name, "-default-pvc") {
-		return fmt.Errorf("不能删除默认持久卷: %s", name)
+		return fmt.Errorf("cannot delete default volume: %s", name)
 	}
 
-	// 删除持久卷
+	// Delete volume
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfigPath, "delete", "pvc", name)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 
 	if err != nil {
-		return fmt.Errorf("删除持久卷失败: %s\n%s", err, stderr.String())
+		return fmt.Errorf("failed to delete volume: %s\n%s", err, stderr.String())
 	}
 
-	fmt.Printf("✅ 持久卷 %s 已删除\n", name)
+	fmt.Printf("✅ Volume %s deleted\n", name)
 	return nil
 }
 
-// 处理持久卷相关命令
 func handleVolumeCommands() {
 	if len(os.Args) < 3 {
 		printVolumeHelp()
@@ -1252,62 +1559,63 @@ func handleVolumeCommands() {
 	subCommand := os.Args[2]
 
 	switch subCommand {
-	case "ls":
+	case "ls", "list":
 		err := listVolumes(kubeconfigPath)
 		if err != nil {
-			fmt.Printf("列出持久卷失败: %s\n", err)
+			fmt.Printf("Failed to list volumes: %s\n", err)
 		}
 	case "create":
 		if len(os.Args) < 6 {
-			fmt.Println("参数不足，用法: hpcgame volume create <名称> <大小> <存储类> [访问模式]")
-			fmt.Println("例如: hpcgame volume create my-data 10Gi x86-amd-default-sc ReadWriteMany")
+			fmt.Println("Insufficient parameters")
+			fmt.Println("Usage: hpcgame volume create NAME SIZE STORAGE_CLASS [ACCESS_MODE]")
+			fmt.Println("Example: hpcgame volume create my-data 10Gi x86-amd-default-sc ReadWriteMany")
 			return
 		}
 		name := os.Args[3]
 		size := os.Args[4]
 		storageClass := os.Args[5]
-		accessMode := "ReadWriteMany" // 默认值
+		accessMode := "ReadWriteMany" // Default
 		if len(os.Args) > 6 {
 			accessMode = os.Args[6]
 		}
 
 		err := createVolume(kubeconfigPath, name, size, storageClass, accessMode)
 		if err != nil {
-			fmt.Printf("创建持久卷失败: %s\n", err)
+			fmt.Printf("Failed to create volume: %s\n", err)
 		}
-	case "delete":
+	case "rm", "delete", "remove":
 		if len(os.Args) < 4 {
-			fmt.Println("参数不足，用法: hpcgame volume delete <名称>")
-			fmt.Println("例如: hpcgame volume delete my-data")
+			fmt.Println("Volume name required")
+			fmt.Println("Usage: hpcgame volume rm NAME")
+			fmt.Println("Example: hpcgame volume rm my-data")
 			return
 		}
 		name := os.Args[3]
 		err := deleteVolume(kubeconfigPath, name)
 		if err != nil {
-			fmt.Printf("删除持久卷失败: %s\n", err)
+			fmt.Printf("Failed to delete volume: %s\n", err)
 		}
 	default:
-		fmt.Printf("未知的持久卷子命令: %s\n", subCommand)
+		fmt.Printf("Unknown volume subcommand: %s\n", subCommand)
 		printVolumeHelp()
 	}
 }
 
-// 打印持久卷帮助信息
 func printVolumeHelp() {
-	helpText := `持久卷命令用法:
-  hpcgame volume ls                                  列出所有持久卷
-  hpcgame volume create <名称> <大小> <存储类> [访问模式]  创建新的持久卷
-  hpcgame volume delete <名称>                        删除指定的持久卷 (默认持久卷不可删除)
+	helpText := `Volume command usage:
+  hpcgame volume ls                                  List all volumes
+  hpcgame volume create NAME SIZE STORAGE_CLASS [MODE]  Create a new volume
+  hpcgame volume rm NAME                             Delete a volume
 
-例如:
+Examples:
   hpcgame volume ls
   hpcgame volume create my-data 10Gi x86-amd-default-sc ReadWriteMany
-  hpcgame volume delete my-data
+  hpcgame volume rm my-data
   
-注意:
-  - 默认持久卷 (名称包含-default-pvc的) 不能被删除
-  - 如果不指定访问模式，默认为ReadWriteMany
-  - 大小必须包含单位，如Gi、Mi等
+Note:
+  - Default volumes (names containing '-default-pvc') cannot be deleted
+  - If access mode is not specified, ReadWriteMany is used
+  - Size must include units (e.g., Gi, Mi)
 `
 	fmt.Println(helpText)
 }
